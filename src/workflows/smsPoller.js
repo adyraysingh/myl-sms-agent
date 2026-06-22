@@ -1,6 +1,6 @@
 const cron = require('node-cron');
 const axios = require('axios');
-const { processIncomingMessage } = require('../agents/mayaAgent');
+const { processInboundSMS } = require('../agents/mayaAgent');
 const { query } = require('../database/connection');
 const logger = require('../utils/logger');
 
@@ -38,7 +38,7 @@ async function pollIncomingSMS() {
         );
         if (existing.rows.length > 0) continue;
         logger.info('Processing inbound SMS via poll', { from: from, msgId: msgId });
-        await processIncomingMessage(from, body, msgId);
+        await processInboundSMS(from, body, CALLHIPPO_VIRTUAL_NUMBER);
       } catch (err) {
         logger.error('Error processing polled SMS', { error: err.message });
       }
