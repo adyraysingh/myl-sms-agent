@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const TWILIO_MESSAGING_SERVICE_SID = process.env.TWILIO_MESSAGING_SERVICE_SID;
 
 function getClient() {
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
@@ -15,9 +16,6 @@ function getClient() {
 
 async function sendSMS(to, body, retries) {
   retries = retries || 3;
-  if (!TWILIO_PHONE_NUMBER) {
-    throw new Error('TWILIO_PHONE_NUMBER env var not set');
-  }
   var cleanPhone = to.replace(/[^0-9+]/g, '');
   if (!cleanPhone.startsWith('+')) {
     cleanPhone = '+' + cleanPhone;
@@ -26,11 +24,19 @@ async function sendSMS(to, body, retries) {
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
       var client = getClient();
-      var message = await client.messages.create({
+      var messageParams = {
         body: body,
-        from: TWILIO_PHONE_NUMBER,
         to: cleanPhone
-      });
+      };
+      // Prefer Messaging Service SID for better deliverability and number pooling
+      if (TWILIO_MESSAGING_SERVICE_SID) {
+        messageParams.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+      } else if (TWILIO_PHONE_NUMBER) {
+        messageParams.from = TWILIO_PHONE_NUMBER;
+      } else {
+        throw new Error('Neither TWILIO_MESSAGING_SERVICE_SID nor TWILIO_PHONE_NUMBER env var is set');
+      }
+      var message = await client.messages.create(messageParams);
       logger.info('SMS sent via Twilio', { to: cleanPhone, messageSid: message.sid, status: message.status });
       try {
         await saveMessage({
@@ -54,13 +60,14 @@ async function sendSMS(to, body, retries) {
 }
 
 async function getIncomingSMS(since) {
-  if (!TWILIO_PHONE_NUMBER) {
+  var numberToCheck = TWILIO_PHONE_NUMBER;
+  if (!numberToCheck) {
     logger.warn('TWILIO_PHONE_NUMBER not set, cannot fetch incoming SMS');
     return [];
   }
   try {
     var client = getClient();
-    var messages = await client.messages.list({ to: TWILIO_PHONE_NUMBER, limit: 50 });
+    var messages = await client.messages.list({ to: numberToCheck, limit: 50 });
     return messages.map(function(msg) {
       return { id: msg.sid, from: msg.from, message: msg.body, timestamp: msg.dateSent };
     }).filter(function(m) { return m.from; });
@@ -71,11 +78,12 @@ async function getIncomingSMS(since) {
 }
 
 async function getConversationMessages(phoneNumber, limit) {
-  if (!TWILIO_PHONE_NUMBER) return [];
+  var numberToCheck = TWILIO_PHONE_NUMBER;
+  if (!numberToCheck) return [];
   limit = limit || 50;
   try {
     var client = getClient();
-    var messages = await client.messages.list({ from: phoneNumber, to: TWILIO_PHONE_NUMBER, limit: limit });
+    var messages = await client.messages.list({ from: phoneNumber, to: numberToCheck, limit: limit });
     return messages;
   } catch (error) {
     logger.error('Failed to fetch conversation messages', { error: error.message });
