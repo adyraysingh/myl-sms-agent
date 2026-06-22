@@ -1,69 +1,72 @@
-const twilio = require('twilio');
+const axios = require('axios');
 const { saveMessage } = require('../database/messages');
 const logger = require('../utils/logger');
 
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-    process.env.TWILIO_AUTH_TOKEN
+const CALLHIPPO_API_KEY = process.env.CALLHIPPO_API_KEY;
+const CALLHIPPO_VIRTUAL_NUMBER = process.env.CALLHIPPO_VIRTUAL_NUMBER;
+const CALLHIPPO_API_URL = 'https://api.callhippo.com/v2';
+
+async function sendSMS(to, body, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const response = await axios.post(
+        `${CALLHIPPO_API_URL}/sms/send`,
+        {
+          from: CALLHIPPO_VIRTUAL_NUMBER,
+          to: to,
+          message: body
+        },
+        {
+          headers: {
+            'Authorization': CALLHIPPO_API_KEY,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      const data = response.data;
+      logger.info('SMS sent via CallHippo', { to, messageId: data.data?.id });
+
+      await saveMessage({
+        phone_number: to,
+        direction: 'outbound',
+        body: body,
+        status: 'sent',
+        external_id: data.data?.id || null
+      });
+
+      return data;
+    } catch (error) {
+      logger.error(`SMS send attempt ${attempt} failed`, {
+        error: error.response?.data || error.message,
+        to
+      });
+      if (attempt === retries) throw error;
+      await sleep(1000 * attempt);
+    }
+  }
+}
+
+async function getMessageStatus(messageId) {
+  try {
+    const response = await axios.get(
+      `${CALLHIPPO_API_URL}/sms/${messageId}`,
+      {
+        headers: {
+          'Authorization': CALLHIPPO_API_KEY,
+          'Content-Type': 'application/json'
+        }
+      }
     );
+    return response.data;
+  } catch (error) {
+    logger.error('Failed to get message status', { error: error.message, messageId });
+    throw error;
+  }
+}
 
-    const FROM_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-    async function sendSMS(to, body, retries = 3) {
-      for (let attempt = 1; attempt <= retries; attempt++) {
-          try {
-                const message = await client.messages.create({
-                        body,
-                                from: FROM_NUMBER,
-                                        to
-                                              });
-                                                    logger.info('SMS sent', { to, sid: message.sid, status: message.status });
-                                                          return message;
-                                                              } catch (error) {
-                                                                    logger.error(`SMS send attempt ${attempt} failed:`, { to, error: error.message });
-                                                                          if (attempt === retries) throw error;
-                                                                                await sleep(1000 * attempt);
-                                                                                    }
-                                                                                      }
-                                                                                      }
-
-                                                                                      async function sendInitialSMS(lead, conversationId) {
-                                                                                        const firstName = lead.first_name || lead.firstName || 'there';
-                                                                                          const message = `Hi ${firstName}, this is Maya from MakeYourLabel! I saw you're interested in launching a clothing brand. What type of products are you planning to launch?`;
-
-                                                                                            const sent = await sendSMS(lead.phone, message);
-
-                                                                                              await saveMessage({
-                                                                                                  conversationId,
-                                                                                                      leadId: lead.id,
-                                                                                                          direction: 'outbound',
-                                                                                                              content: message,
-                                                                                                                  twilioSid: sent.sid,
-                                                                                                                      status: 'sent'
-                                                                                                                        });
-                                                                                                                        
-                                                                                                                          return sent;
-                                                                                                                          }
-                                                                                                                          
-                                                                                                                          async function sendFollowUpSMS(phone, message, conversationId, leadId) {
-                                                                                                                            const sent = await sendSMS(phone, message);
-                                                                                                                            
-                                                                                                                              if (conversationId && leadId) {
-                                                                                                                                  await saveMessage({
-                                                                                                                                        conversationId,
-                                                                                                                                              leadId,
-                                                                                                                                                    direction: 'outbound',
-                                                                                                                                                          content: message,
-                                                                                                                                                                twilioSid: sent.sid,
-                                                                                                                                                                      status: 'sent'
-                                                                                                                                                                          });
-                                                                                                                                                                            }
-                                                                                                                                                                            
-                                                                                                                                                                              return sent;
-                                                                                                                                                                              }
-                                                                                                                                                                              
-                                                                                                                                                                              function sleep(ms) {
-                                                                                                                                                                                return new Promise(resolve => setTimeout(resolve, ms));
-                                                                                                                                                                                }
-                                                                                                                                                                                
-                                                                                                                                                                                module.exports = { sendSMS, sendInitialSMS, sendFollowUpSMS };
+module.exports = { sendSMS, getMessageStatus };
