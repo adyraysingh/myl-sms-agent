@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { pool } = require('./connection');
+const { Pool } = require('pg');
 
 const migrations = `
   CREATE TABLE IF NOT EXISTS leads (
@@ -76,17 +76,30 @@ const migrations = `
                                                                                                                                                                                                                                                                 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
                                                                                                                                                                                                                                                                   CREATE INDEX IF NOT EXISTS idx_followups_scheduled ON follow_ups(scheduled_at, status);
                                                                                                                                                                                                                                                                   `;
-                                                                                                                                                                                                                                                                  
-                                                                                                                                                                                                                                                                  async function migrate() {
-                                                                                                                                                                                                                                                                    try {
-                                                                                                                                                                                                                                                                        console.log('Running database migrations...');
-                                                                                                                                                                                                                                                                            await pool.query(migrations);
-                                                                                                                                                                                                                                                                                console.log('Migrations completed successfully');
-                                                                                                                                                                                                                                                                                    process.exit(0);
-                                                                                                                                                                                                                                                                                      } catch (error) {
-                                                                                                                                                                                                                                                                                          console.error('Migration failed:', error);
-                                                                                                                                                                                                                                                                                              process.exit(1);
-                                                                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                                                                                
-                                                                                                                                                                                                                                                                                                migrate();
+
+async function migrate() {
+    if (!process.env.DATABASE_URL) {
+          console.log('DATABASE_URL not set - skipping migrations');
+          process.exit(0);
+    }
+
+  const pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        connectionTimeoutMillis: 10000,
+  });
+
+  try {
+        console.log('Running database migrations...');
+        await pool.query(migrations);
+        console.log('Migrations completed successfully');
+        await pool.end();
+        process.exit(0);
+  } catch (error) {
+        console.error('Migration failed:', error.message);
+        await pool.end().catch(() => {});
+        process.exit(1);
+  }
+}
+
+migrate();
