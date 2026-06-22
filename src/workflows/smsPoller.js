@@ -6,7 +6,8 @@ const logger = require('../utils/logger');
 
 const CALLHIPPO_API_KEY = process.env.CALLHIPPO_API_KEY;
 const CALLHIPPO_VIRTUAL_NUMBER = process.env.CALLHIPPO_VIRTUAL_NUMBER;
-const CALLHIPPO_API_URL = 'https://api.callhippo.com/v2';
+const CALLHIPPO_NUMBER_ID = process.env.CALLHIPPO_NUMBER_ID;
+const CALLHIPPO_API_URL = 'https://inbox-api.callhippo.com';
 
 let lastPolledAt = new Date(Date.now() - 5 * 60 * 1000);
 
@@ -15,34 +16,48 @@ async function pollIncomingSMS() {
     logger.warn('CALLHIPPO_API_KEY not set, skipping SMS poll');
     return;
   }
+  if (!CALLHIPPO_NUMBER_ID) {
+    logger.warn('CALLHIPPO_NUMBER_ID not set, skipping SMS poll');
+    return;
+  }
   try {
-    const sinceIso = lastPolledAt.toISOString();
-    const response = await axios.get(CALLHIPPO_API_URL + '/sms/list', {
-      headers: { Authorization: CALLHIPPO_API_KEY },
-      params: { type: 'received', since: sinceIso, limit: 50 }
-    });
-    const messages = (response.data && response.data.data) || [];
-    if (messages.length > 0) {
-      logger.info('Polled ' + messages.length + ' incoming SMS');
+    const response = await axios.post(
+      CALLHIPPO_API_URL + '/chats/getChatList/' + CALLHIPPO_NUMBER_ID,
+      { page: 1, limit: 50, type: 'sms' },
+      { headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' } }
+    );
+    const chats = (response.data && response.data.result) || [];
+    if (chats.length > 0) {
+      logger.info('Polled ' + chats.length + ' SMS chats from CallHippo');
     }
-    lastPolledAt = new Date();
-    for (const msg of messages) {
+    // Process chats that have new messages since last poll
+    for (const chat of chats) {
       try {
-        const from = msg.from || msg.sender;
-        const body = msg.message || msg.text || msg.body;
-        const msgId = msg.id || msg._id;
-        if (!from || !body) continue;
+        const chatId = chat._id || chat.chatId;
+        const phoneNum = (chat.chatId || '').replace('@c.us', '');
+        const lastMsgTime = chat.lastMessageTime ? new Date(chat.lastMessageTime) : null;
+        if (!phoneNum) continue;
+        // Only process chats with messages newer than our last poll
+        if (!lastMsgTime || lastMsgTime <= lastPolledAt) continue;
+        // Check if this message was already processed
+        const msgContent = chat.lastMessage || '';
+        if (!msgContent) continue;
+        // Avoid processing outbound messages sent by us
+        if (chat.lastMessageFromMe) continue;
+        const fromPhone = '+' + phoneNum;
+        const msgId = chat._id + '_' + (chat.lastMessageTime || '');
         const existing = await query(
           'SELECT id FROM messages WHERE external_id = $1',
           [msgId]
         );
         if (existing.rows.length > 0) continue;
-        logger.info('Processing inbound SMS via poll', { from: from, msgId: msgId });
-        await processInboundSMS(from, body, CALLHIPPO_VIRTUAL_NUMBER);
+        logger.info('Processing inbound SMS via poll', { from: fromPhone, msgId: msgId });
+        await processInboundSMS(fromPhone, msgContent, CALLHIPPO_VIRTUAL_NUMBER);
       } catch (err) {
         logger.error('Error processing polled SMS', { error: err.message });
       }
     }
+    lastPolledAt = new Date();
   } catch (error) {
     const errData = (error.response && error.response.data) || error.message;
     if (error.response && error.response.status === 404) {
