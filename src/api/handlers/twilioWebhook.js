@@ -1,4 +1,4 @@
-const { processInboundSMS } = require('../../agents/mayaSmsAgent');
+const { processInboundSMS } = require('../../agents/mayaAgent');
 const logger = require('../../utils/logger');
 
 // CallHippo webhook for inbound SMS events
@@ -9,7 +9,7 @@ async function handleCallHippoWebhook(req, res) {
 
     // CallHippo sends SMS events with these fields
     const eventType = event.type || event.event_type;
-    
+
     // Handle inbound SMS
     if (eventType === 'sms.received' || eventType === 'inbound_sms' || event.direction === 'inbound') {
       const from = event.from || event.caller || event.sender;
@@ -37,9 +37,9 @@ async function handleCallHippoWebhook(req, res) {
 
     // Handle SMS delivery status updates
     if (eventType === 'sms.delivered' || eventType === 'sms.failed' || eventType === 'sms.sent') {
-      logger.info('SMS status update', { 
-        messageId: event.message_id || event.id, 
-        status: eventType 
+      logger.info('SMS status update', {
+        messageId: event.message_id || event.id,
+        status: eventType
       });
       return res.status(200).json({ success: true });
     }
