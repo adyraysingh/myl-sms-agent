@@ -7,33 +7,45 @@ const CALLHIPPO_VIRTUAL_NUMBER = process.env.CALLHIPPO_VIRTUAL_NUMBER;
 const CALLHIPPO_NUMBER_ID = process.env.CALLHIPPO_NUMBER_ID;
 const CALLHIPPO_API_URL = 'https://inbox-api.callhippo.com';
 
-async function sendSMS(to, body, retries = 3) {
+async function sendSMS(to, body, retries) {
+  retries = retries || 3;
   if (!CALLHIPPO_NUMBER_ID) {
     throw new Error('CALLHIPPO_NUMBER_ID env var not set');
   }
-  // Normalize phone number: ensure +countrycode format, convert to @c.us for CallHippo
-  var phoneNum = to.replace(/[^0-9]/g, '');
-  var chatId = phoneNum + '@c.us';
-  for (let attempt = 1; attempt <= retries; attempt++) {
+  // Normalize phone: ensure +countrycode digits only
+  var cleanPhone = to.replace(/[^0-9+]/g, '');
+  if (!cleanPhone.startsWith('+')) {
+    cleanPhone = '+' + cleanPhone;
+  }
+
+  for (var attempt = 1; attempt <= retries; attempt++) {
     try {
-      const payload = {
-        to: to,
-        chatId: chatId,
+      // CallHippo SMS API - plain SMS (not WhatsApp)
+      // chatId format for SMS: phone digits + @s.whatsapp.net is WhatsApp
+      // For regular SMS: just use the phone number directly
+      var phoneDigits = cleanPhone.replace(/[^0-9]/g, '');
+      var payload = {
+        to: cleanPhone,
+        chatId: phoneDigits + '@c.us',
         body: body,
-        type: 'chat',
-        fromNumber: CALLHIPPO_VIRTUAL_NUMBER
+        type: 'chat'
       };
-      const response = await axios.post(
+      var response = await axios.post(
         CALLHIPPO_API_URL + '/sms/sendMessage/' + CALLHIPPO_NUMBER_ID,
         payload,
         { headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' } }
       );
-      const data = response.data;
-      logger.info('SMS sent via CallHippo', { to: to, messageId: data && data._id });
-      await saveMessage({ phone_number: to, direction: 'outbound', body: body, status: 'sent', external_id: (data && data._id) || null });
+      var data = response.data;
+      logger.info('SMS sent via CallHippo', { to: cleanPhone, messageId: data && data._id, response: data });
+      try {
+        await saveMessage({ phone_number: cleanPhone, direction: 'outbound', body: body, status: 'sent', external_id: (data && data._id) || null });
+      } catch (dbErr) {
+        logger.warn('Failed to save outbound message to DB', { error: dbErr.message });
+      }
       return data;
     } catch (error) {
-      logger.error('SMS send attempt ' + attempt + ' failed', { error: (error.response && error.response.data) || error.message, to: to });
+      var errData = (error.response && error.response.data) || error.message;
+      logger.error('SMS send attempt ' + attempt + ' failed', { error: errData, to: cleanPhone, status: error.response && error.response.status });
       if (attempt === retries) throw error;
       await sleep(1000 * attempt);
     }
@@ -46,16 +58,16 @@ async function getIncomingSMS(since) {
     return [];
   }
   try {
-    const response = await axios.post(
+    var response = await axios.post(
       CALLHIPPO_API_URL + '/chats/getChatList/' + CALLHIPPO_NUMBER_ID,
       { page: 1, limit: 50, type: 'sms' },
       { headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' } }
     );
-    const chats = (response.data && response.data.result) || [];
+    var chats = (response.data && response.data.result) || [];
     return chats.map(function(chat) {
       return {
         id: chat._id,
-        from: (chat.chatId || '').replace('@c.us', ''),
+        from: (chat.chatId || '').replace('@c.us', '').replace('@s.whatsapp.net', ''),
         message: chat.lastMessage || '',
         timestamp: chat.lastMessageTime || null
       };
@@ -69,8 +81,8 @@ async function getIncomingSMS(since) {
 async function getConversationMessages(phoneNumber, limit) {
   if (!CALLHIPPO_NUMBER_ID) return [];
   limit = limit || 50;
-  var phoneNum = phoneNumber.replace(/[^0-9]/g, '');
-  var chatId = phoneNum + '@c.us';
+  var phoneDigits = phoneNumber.replace(/[^0-9]/g, '');
+  var chatId = phoneDigits + '@c.us';
   try {
     var response = await axios.get(
       CALLHIPPO_API_URL + '/chats/getChatUserConversations/' + CALLHIPPO_NUMBER_ID,
@@ -94,4 +106,4 @@ function sleep(ms) {
   return new Promise(function(resolve) { setTimeout(resolve, ms); });
 }
 
-module.exports = { sendSMS, getMessageStatus, getIncomingSMS, getConversationMessages };
+module.exports = { sendSMS: sendSMS, getMessageStatus: getMessageStatus, getIncomingSMS: getIncomingSMS, getConversationMessages: getConversationMessages };
