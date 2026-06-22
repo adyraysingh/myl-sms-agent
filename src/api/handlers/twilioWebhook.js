@@ -1,56 +1,42 @@
 const { processInboundSMS } = require('../../agents/mayaAgent');
 const logger = require('../../utils/logger');
 
-// CallHippo webhook for inbound SMS events
-async function handleCallHippoWebhook(req, res) {
+// Twilio inbound SMS webhook handler
+// Twilio sends: From, Body, To, MessageSid, AccountSid, etc.
+async function handleTwilioInbound(req, res) {
   try {
-    const event = req.body;
-    logger.info('CallHippo webhook received', { event });
+    const from = req.body.From || req.body.from;
+    const body = req.body.Body || req.body.body || req.body.text;
+    const to = req.body.To || req.body.to;
 
-    // CallHippo sends SMS events with these fields
-    const eventType = event.type || event.event_type;
+    logger.info('Twilio inbound SMS received', { from: from, body: body, to: to });
 
-    // Handle inbound SMS
-    if (eventType === 'sms.received' || eventType === 'inbound_sms' || event.direction === 'inbound') {
-      const from = event.from || event.caller || event.sender;
-      const body = event.message || event.text || event.body;
-      const to = event.to || event.receiver || process.env.CALLHIPPO_VIRTUAL_NUMBER;
+    if (!from || !body) {
+      logger.warn('Twilio inbound webhook missing From/Body', { body: req.body });
+      return res.status(200).send('<Response></Response>');
+    }
 
-      if (!from || !body) {
-        logger.warn('CallHippo webhook missing from/body', { event });
-        return res.status(200).json({ success: true, message: 'skipped - missing fields' });
+    // Respond to Twilio immediately with empty TwiML (no auto-reply)
+    res.status(200).set('Content-Type', 'text/xml').send('<Response></Response>');
+
+    // Process asynchronously - Maya generates and sends reply via sendSMS
+    setImmediate(async () => {
+      try {
+        await processInboundSMS(from, body, to);
+      } catch (err) {
+        logger.error('Error processing inbound SMS', { error: err.message, from: from });
       }
-
-      logger.info('Inbound SMS received', { from, body, to });
-
-      // Process asynchronously - respond to CallHippo immediately
-      setImmediate(async () => {
-        try {
-          await processInboundSMS(from, body, to);
-        } catch (err) {
-          logger.error('Error processing inbound SMS', { error: err.message, from });
-        }
-      });
-
-      return res.status(200).json({ success: true, message: 'SMS processing initiated' });
-    }
-
-    // Handle SMS delivery status updates
-    if (eventType === 'sms.delivered' || eventType === 'sms.failed' || eventType === 'sms.sent') {
-      logger.info('SMS status update', {
-        messageId: event.message_id || event.id,
-        status: eventType
-      });
-      return res.status(200).json({ success: true });
-    }
-
-    logger.info('Unhandled CallHippo event type', { eventType });
-    return res.status(200).json({ success: true, message: 'event acknowledged' });
+    });
 
   } catch (error) {
-    logger.error('CallHippo webhook error', { error: error.message, stack: error.stack });
-    return res.status(200).json({ success: false, error: error.message });
+    logger.error('Twilio inbound webhook error', { error: error.message, stack: error.stack });
+    return res.status(200).set('Content-Type', 'text/xml').send('<Response></Response>');
   }
 }
 
-module.exports = { handleCallHippoWebhook };
+// Legacy alias for backward compatibility
+async function handleCallHippoWebhook(req, res) {
+  return handleTwilioInbound(req, res);
+}
+
+module.exports = { handleTwilioInbound: handleTwilioInbound, handleCallHippoWebhook: handleCallHippoWebhook };
