@@ -3,7 +3,7 @@ const { sendSMS } = require('../services/twilioService');
 const { findLeadByPhone, createOrUpdateLead, updateLeadStatus, updateLead } = require('../database/leads');
 const { saveMessage, getConversationHistory } = require('../database/messages');
 const { updateZohoLead } = require('../services/zohoService');
-const { getMayaPrompt } = require('../prompts/mayaPrompt');
+const { getMayaSystemPrompt } = require('../prompts/mayaPrompt');
 const logger = require('../utils/logger');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -14,13 +14,18 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 async function getOrCreateLead(phone, extraData = {}) {
   let lead = await findLeadByPhone(phone);
   if (!lead) {
+    const phoneDigits = phone.replace(/\D/g, '');
     lead = await createOrUpdateLead({
       phone,
-      zohoLeadId: 'sms_' + phone.replace(/\D/g, ''),
+      zohoLeadId: 'sms_' + phoneDigits,
       firstName: extraData.name ? extraData.name.split(' ')[0] : '',
       lastName: extraData.name ? extraData.name.split(' ').slice(1).join(' ') : '',
       email: extraData.email || '',
       leadSource: 'SMS Inbound',
+      company: extraData.company || '',
+      budget: null,
+      timeline: null,
+      productCategory: null,
       ...extraData
     });
   }
@@ -34,14 +39,17 @@ async function processInboundSMS(from, body, to) {
     await saveMessage({ phone_number: from, direction: 'inbound', body, status: 'received' });
     const history = await getConversationHistory(from, 10);
     const messages = [
-      { role: 'system', content: getMayaPrompt(lead) },
-      ...history.map(msg => ({ role: msg.direction === 'inbound' ? 'user' : 'assistant', content: msg.body })),
+      { role: 'system', content: getMayaSystemPrompt(lead) },
+      ...history.map(function(msg) {
+        return { role: msg.direction === 'inbound' ? 'user' : 'assistant', content: msg.content || msg.body };
+      }),
       { role: 'user', content: body }
     ];
     const completion = await openai.chat.completions.create({ model: MODEL, messages, max_tokens: 300, temperature: 0.7 });
     const reply = completion.choices[0].message.content.trim();
     logger.info('Maya reply generated', { from, reply });
     await sendSMS(from, reply);
+    await saveMessage({ phone_number: from, direction: 'outbound', body: reply, status: 'sent' });
 
     const intent = await analyzeIntent(body);
     if (intent.includes('interested') || intent.includes('qualified')) {
@@ -52,7 +60,9 @@ async function processInboundSMS(from, body, to) {
       await updateLeadStatus(lead.id, 'onboarding_sent');
     } else if (intent.includes('stop') || intent.includes('unsubscribe')) {
       await updateLead(lead.id, { optedOut: true });
-      await updateZohoLead(lead.zoho_lead_id, { Lead_Status: 'Unqualified', Description: 'Opted out via SMS' });
+      if (lead.zoho_lead_id) {
+        await updateZohoLead(lead.zoho_lead_id, { Lead_Status: 'Unqualified', Description: 'Opted out via SMS' });
+      }
     }
     return { success: true, reply };
   } catch (error) {
@@ -61,21 +71,29 @@ async function processInboundSMS(from, body, to) {
   }
 }
 
-async function sendInitialOutreach(phoneNumber, leadName, leadInfo = {}) {
+async function sendInitialOutreach(phoneNumber, leadName, leadInfo) {
+  leadInfo = leadInfo || {};
   logger.info('Sending initial outreach', { phoneNumber, leadName });
   try {
     const lead = await getOrCreateLead(phoneNumber, { name: leadName, ...leadInfo });
     const completion = await openai.chat.completions.create({
       model: MODEL,
       messages: [
-        { role: 'system', content: getMayaPrompt(lead) },
+        { role: 'system', content: getMayaSystemPrompt(lead) },
         { role: 'user', content: 'Send initial outreach SMS to ' + leadName + ' who just submitted a lead form for private label clothing.' }
       ],
       max_tokens: 200,
       temperature: 0.7
     });
-    const message = completion.choices[0].message.content.trim();
+    const rawReply = completion.choices[0].message.content.trim();
+    // Extract message if JSON response
+    let message = rawReply;
+    try {
+      const parsed = JSON.parse(rawReply);
+      message = parsed.message || rawReply;
+    } catch (e) { /* not JSON, use as-is */ }
     await sendSMS(phoneNumber, message);
+    await saveMessage({ phone_number: phoneNumber, direction: 'outbound', body: message, status: 'sent' });
     await updateLeadStatus(lead.id, 'contacted');
     return { success: true, message };
   } catch (error) {
@@ -95,7 +113,7 @@ async function analyzeIntent(message) {
       max_tokens: 50
     });
     return completion.choices[0].message.content.trim().toLowerCase();
-  } catch { return 'other'; }
+  } catch (e) { return 'other'; }
 }
 
 module.exports = { processInboundSMS, sendInitialOutreach };
