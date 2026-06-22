@@ -2,7 +2,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const { webhookRoutes } = require('./api/webhooks');
+const webhookRoutes = require('./api/webhooks');
 const { healthRoutes } = require('./api/health');
 const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler } = require('./middleware/errorHandler');
@@ -17,33 +17,30 @@ app.use(cors({ origin: process.env.ALLOWED_ORIGINS || '*' }));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-    max: 100,
-      message: { error: 'Too many requests, please try again later.' },
-        standardHeaders: true,
-          legacyHeaders: false,
-          });
-          app.use(limiter);
+  max: 100,
+  message: { error: 'Too many requests, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
 
-          // Twilio webhook needs raw body for signature verification
-          app.use('/webhooks/twilio', express.urlencoded({ extended: false }));
+// JSON parsing for routes
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-          // JSON parsing for other routes
-          app.use(express.json({ limit: '10mb' }));
-          app.use(express.urlencoded({ extended: true }));
+// Request logging
+app.use(requestLogger);
 
-          // Request logging
-          app.use(requestLogger);
+// Routes
+app.use('/webhooks', webhookRoutes);
+app.use('/', healthRoutes);
 
-          // Routes
-          app.use('/webhooks', webhookRoutes);
-          app.use('/', healthRoutes);
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
 
-          // 404 handler
-          app.use((req, res) => {
-            res.status(404).json({ error: 'Not found' });
-            });
+// Error handler
+app.use(errorHandler);
 
-            // Error handler
-            app.use(errorHandler);
-
-            module.exports = app;
+module.exports = app;
