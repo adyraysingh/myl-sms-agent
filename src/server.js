@@ -1,31 +1,80 @@
-// Minimal server.js - v3 - pure http, no dependencies
-const http = require('http');
-process.stdout.write('server.js starting\n');
+require('dotenv').config();
+const express = require('express');
+const logger = require('./utils/logger');
 
 const PORT = process.env.PORT || 3000;
-process.stdout.write('PORT=' + PORT + '\n');
+const app = express();
 
-const server = http.createServer((req, res) => {
-        process.stdout.write('Request: ' + req.method + ' ' + req.url + '\n');
-        if (req.url === '/health' || req.url === '/') {
-                  res.writeHead(200, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ status: 'ok', version: 3, port: PORT }));
-        } else {
-                  res.writeHead(404);
-                  res.end('Not found');
-        }
+// Health check endpoint - must be first, no auth
+app.get('/health', (req, res) => {
+          res.status(200).json({
+                      status: 'healthy',
+                      timestamp: new Date().toISOString(),
+                      uptime: process.uptime(),
+                      environment: process.env.NODE_ENV || 'development',
+                      database: process.env.DATABASE_URL ? 'configured' : 'not configured'
+          });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-        process.stdout.write('Server listening on port ' + PORT + '\n');
+app.get('/', (req, res) => {
+          res.status(200).json({ message: 'MYL SMS Agent - Maya is ready', status: 'ok' });
 });
 
-server.on('error', (err) => {
-        process.stderr.write('Server error: ' + err.message + '\n');
-        process.exit(1);
+// Load full app routes
+let fullApp = null;
+try {
+          fullApp = require('./app');
+          logger.info('Full app loaded successfully');
+} catch (err) {
+          logger.error('Failed to load full app:', err.message);
+}
+
+// Mount full app routes if available
+if (fullApp) {
+          app.use(fullApp);
+}
+
+// Start server
+const server = app.listen(PORT, '0.0.0.0', () => {
+          logger.info(`MYL SMS Agent running on port ${PORT}`);
+          logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+          logger.info(`Service URL: https://maya-ai-sales-production.up.railway.app`);
 });
 
-process.on('uncaughtException', (err) => {
-        process.stderr.write('Uncaught: ' + err.message + '\n');
-        process.exit(1);
+// Initialize database and scheduler (non-blocking)
+async function initializeServices() {
+          if (!process.env.DATABASE_URL) {
+                      logger.warn('DATABASE_URL not set - running without database');
+                      return;
+          }
+          try {
+                      const { connectDatabase } = require('./database/connection');
+                      await connectDatabase();
+                      logger.info('Database connected successfully');
+                      const { startFollowUpScheduler } = require('./workflows/followUpScheduler');
+                      startFollowUpScheduler();
+                      logger.info('Follow-up scheduler started');
+          } catch (error) {
+                      logger.error('Services init failed:', error.message);
+                      logger.warn('Running in degraded mode');
+          }
+}
+
+initializeServices();
+
+process.on('unhandledRejection', (reason) => {
+          logger.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+          logger.error('Uncaught Exception:', error.message);
+          process.exit(1);
+});
+
+process.on('SIGTERM', () => {
+          logger.info('SIGTERM received, shutting down gracefully');
+          server.close(() => {
+                      logger.info('Process terminated');
+                      process.exit(0);
+          });
 });
