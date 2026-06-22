@@ -1,0 +1,33 @@
+{
+    "name": "myl-sms-agent",
+    "version": "1.0.0",
+    "description": "MakeYourLabel AI SMS Sales Agent - Maya autonomous SMS conversation engine",
+    "main": "src/server.js",
+    "scripts": {
+          "start": "node src/server.js",
+          "dev": "nodemon src/server.js",
+          "migrate": "node src/database/migrate.js",
+          "seed": "node src/database/seed.js"
+    },
+    "dependencies": {
+          "express": "^4.18.2",
+          "twilio": "^4.20.1",
+          "openai": "^4.28.0",
+          "pg": "^8.11.3",
+          "axios": "^1.6.7",
+          "dotenv": "^16.4.1",
+          "express-rate-limit": "^7.1.5",
+          "winston": "^3.11.0",
+          "node-cron": "^3.0.3",
+          "crypto": "^1.0.1",
+          "helmet": "^7.1.0",
+          "cors": "^2.8.5",
+          "uuid": "^9.0.0"
+    },
+    "devDependencies": {
+          "nodemon": "^3.0.3"
+    },
+    "engines": {
+          "node": ">=18.0.0"
+    }
+}
