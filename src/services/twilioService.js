@@ -1,18 +1,23 @@
-const axios = require('axios');
+const twilio = require('twilio');
 const { saveMessage } = require('../database/messages');
 const logger = require('../utils/logger');
 
-const CALLHIPPO_API_KEY = process.env.CALLHIPPO_API_KEY;
-const CALLHIPPO_VIRTUAL_NUMBER = process.env.CALLHIPPO_VIRTUAL_NUMBER;
-const CALLHIPPO_NUMBER_ID = process.env.CALLHIPPO_NUMBER_ID;
-const CALLHIPPO_API_URL = 'https://inbox-api.callhippo.com';
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+
+function getClient() {
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+    throw new Error('TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN env vars not set');
+  }
+  return twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+}
 
 async function sendSMS(to, body, retries) {
   retries = retries || 3;
-  if (!CALLHIPPO_NUMBER_ID) {
-    throw new Error('CALLHIPPO_NUMBER_ID env var not set');
+  if (!TWILIO_PHONE_NUMBER) {
+    throw new Error('TWILIO_PHONE_NUMBER env var not set');
   }
-  // Normalize phone: ensure +countrycode digits only
   var cleanPhone = to.replace(/[^0-9+]/g, '');
   if (!cleanPhone.startsWith('+')) {
     cleanPhone = '+' + cleanPhone;
@@ -20,32 +25,28 @@ async function sendSMS(to, body, retries) {
 
   for (var attempt = 1; attempt <= retries; attempt++) {
     try {
-      // CallHippo SMS API - plain SMS (not WhatsApp)
-      // chatId format for SMS: phone digits + @s.whatsapp.net is WhatsApp
-      // For regular SMS: just use the phone number directly
-      var phoneDigits = cleanPhone.replace(/[^0-9]/g, '');
-      var payload = {
-        to: cleanPhone,
-        chatId: phoneDigits + '@c.us',
+      var client = getClient();
+      var message = await client.messages.create({
         body: body,
-        type: 'chat'
-      };
-      var response = await axios.post(
-        CALLHIPPO_API_URL + '/sms/sendMessage/' + CALLHIPPO_NUMBER_ID,
-        payload,
-        { headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' } }
-      );
-      var data = response.data;
-      logger.info('SMS sent via CallHippo', { to: cleanPhone, messageId: data && data._id, response: data });
+        from: TWILIO_PHONE_NUMBER,
+        to: cleanPhone
+      });
+      logger.info('SMS sent via Twilio', { to: cleanPhone, messageSid: message.sid, status: message.status });
       try {
-        await saveMessage({ phone_number: cleanPhone, direction: 'outbound', body: body, status: 'sent', external_id: (data && data._id) || null });
+        await saveMessage({
+          phone_number: cleanPhone,
+          direction: 'outbound',
+          body: body,
+          status: 'sent',
+          external_id: message.sid || null
+        });
       } catch (dbErr) {
         logger.warn('Failed to save outbound message to DB', { error: dbErr.message });
       }
-      return data;
+      return message;
     } catch (error) {
-      var errData = (error.response && error.response.data) || error.message;
-      logger.error('SMS send attempt ' + attempt + ' failed', { error: errData, to: cleanPhone, status: error.response && error.response.status });
+      var errData = (error.message) || error;
+      logger.error('SMS send attempt ' + attempt + ' failed', { error: errData, to: cleanPhone, code: error.code });
       if (attempt === retries) throw error;
       await sleep(1000 * attempt);
     }
@@ -53,45 +54,29 @@ async function sendSMS(to, body, retries) {
 }
 
 async function getIncomingSMS(since) {
-  if (!CALLHIPPO_NUMBER_ID) {
-    logger.warn('CALLHIPPO_NUMBER_ID not set, cannot fetch incoming SMS');
+  if (!TWILIO_PHONE_NUMBER) {
+    logger.warn('TWILIO_PHONE_NUMBER not set, cannot fetch incoming SMS');
     return [];
   }
   try {
-    var response = await axios.post(
-      CALLHIPPO_API_URL + '/chats/getChatList/' + CALLHIPPO_NUMBER_ID,
-      { page: 1, limit: 50, type: 'sms' },
-      { headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' } }
-    );
-    var chats = (response.data && response.data.result) || [];
-    return chats.map(function(chat) {
-      return {
-        id: chat._id,
-        from: (chat.chatId || '').replace('@c.us', '').replace('@s.whatsapp.net', ''),
-        message: chat.lastMessage || '',
-        timestamp: chat.lastMessageTime || null
-      };
+    var client = getClient();
+    var messages = await client.messages.list({ to: TWILIO_PHONE_NUMBER, limit: 50 });
+    return messages.map(function(msg) {
+      return { id: msg.sid, from: msg.from, message: msg.body, timestamp: msg.dateSent };
     }).filter(function(m) { return m.from; });
   } catch (error) {
-    logger.error('Failed to fetch incoming SMS', { error: (error.response && error.response.data) || error.message });
+    logger.error('Failed to fetch incoming SMS', { error: error.message });
     return [];
   }
 }
 
 async function getConversationMessages(phoneNumber, limit) {
-  if (!CALLHIPPO_NUMBER_ID) return [];
+  if (!TWILIO_PHONE_NUMBER) return [];
   limit = limit || 50;
-  var phoneDigits = phoneNumber.replace(/[^0-9]/g, '');
-  var chatId = phoneDigits + '@c.us';
   try {
-    var response = await axios.get(
-      CALLHIPPO_API_URL + '/chats/getChatUserConversations/' + CALLHIPPO_NUMBER_ID,
-      {
-        headers: { Authorization: CALLHIPPO_API_KEY, 'Content-Type': 'application/json' },
-        params: { chatId: chatId, limit: limit }
-      }
-    );
-    return (response.data && response.data.result) || [];
+    var client = getClient();
+    var messages = await client.messages.list({ from: phoneNumber, to: TWILIO_PHONE_NUMBER, limit: limit });
+    return messages;
   } catch (error) {
     logger.error('Failed to fetch conversation messages', { error: error.message });
     return [];
@@ -99,7 +84,13 @@ async function getConversationMessages(phoneNumber, limit) {
 }
 
 async function getMessageStatus(messageId) {
-  return { id: messageId, status: 'sent' };
+  try {
+    var client = getClient();
+    var message = await client.messages(messageId).fetch();
+    return { id: messageId, status: message.status };
+  } catch (error) {
+    return { id: messageId, status: 'unknown' };
+  }
 }
 
 function sleep(ms) {
