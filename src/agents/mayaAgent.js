@@ -1,109 +1,83 @@
 const OpenAI = require('openai');
-const { getMayaSystemPrompt } = require('../prompts/mayaPrompt');
-const { getConversationMessages, updateConversationSummary } = require('../database/conversations');
-const { updateLeadStatus, updateLeadScore } = require('../database/leads');
-const { saveMessage } = require('../database/messages');
 const { sendSMS } = require('../services/twilioService');
-const { calculateLeadScore } = require('./leadScorer');
+const { getOrCreateLead, updateLeadStatus } = require('../database/leads');
+const { saveMessage, getConversationHistory } = require('../database/messages');
+const { updateZohoLead } = require('../services/zohoService');
+const { getMayaPrompt } = require('../prompts/mayaPrompt');
 const logger = require('../utils/logger');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const ONBOARDING_URL = process.env.ONBOARDING_URL || 'https://start.makeyourlabel.com';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
-async function generateMayaResponse({ lead, messages, latestMessage }) {
-    try {
-          const systemPrompt = getMayaSystemPrompt(lead);
-          const conversationHistory = buildConversationHistory(messages);
-
-      const response = await openai.chat.completions.create({
-              model: 'gpt-4o',
-              messages: [
-                { role: 'system', content: systemPrompt },
-                        ...conversationHistory,
-                { role: 'user', content: latestMessage }
-                      ],
-              max_tokens: 300,
-              temperature: 0.8,
-              response_format: { type: 'json_object' }
-      });
-
-      const content = JSON.parse(response.choices[0].message.content);
-          logger.info('Maya generated response', { leadId: lead.id, intent: content.intent });
-
-      return {
-              message: content.message,
-              summary: content.summary || '',
-              suggestedStatus: content.suggestedStatus || null,
-              sentOnboardingLink: content.sentOnboardingLink || false,
-              extractedData: content.extractedData || {},
-              intent: content.intent || 'conversation'
-      };
-    } catch (error) {
-          logger.error('Error generating Maya response:', error);
-          return {
-                  message: 'Hey! Thanks for your message. Let me get back to you shortly.',
-                  summary: '',
-                  suggestedStatus: null,
-                  sentOnboardingLink: false,
-                  extractedData: {},
-                  intent: 'fallback'
-          };
+async function processInboundSMS(from, body, to) {
+  logger.info('Processing inbound SMS', { from, body });
+  try {
+    const lead = await getOrCreateLead(from);
+    await saveMessage({ phone_number: from, direction: 'inbound', body, status: 'received' });
+    const history = await getConversationHistory(from, 10);
+    const messages = [
+      { role: 'system', content: getMayaPrompt(lead) },
+      ...history.map(msg => ({ role: msg.direction === 'inbound' ? 'user' : 'assistant', content: msg.body })),
+      { role: 'user', content: body }
+    ];
+    const completion = await openai.chat.completions.create({ model: MODEL, messages, max_tokens: 300, temperature: 0.7 });
+    const reply = completion.choices[0].message.content.trim();
+    logger.info('Maya reply generated', { from, reply });
+    await sendSMS(from, reply);
+    const intent = await analyzeIntent(body);
+    if (intent.includes('interested') || intent.includes('qualified')) {
+      await updateLeadStatus(from, 'qualified');
+      await updateZohoLead(lead.zoho_id, { Lead_Status: 'Qualified', Description: 'Qualified via SMS - Maya AI' });
+    } else if (body.toLowerCase().includes('yes') || body.toLowerCase().includes('link') || intent.includes('onboarding')) {
+      await sendSMS(from, 'Here is your onboarding link: ' + ONBOARDING_URL);
+      await updateLeadStatus(from, 'onboarding_sent');
+    } else if (intent.includes('stop') || intent.includes('unsubscribe')) {
+      await updateLeadStatus(from, 'opted_out');
+      await updateZohoLead(lead.zoho_id, { Lead_Status: 'Unqualified', Description: 'Opted out via SMS' });
     }
+    return { success: true, reply };
+  } catch (error) {
+    logger.error('Error processing inbound SMS', { error: error.message, from });
+    throw error;
+  }
 }
 
-async function processInboundSMS(lead, conversation, messageBody) {
-    try {
-          // Get conversation history
-      const messages = await getConversationMessages(conversation.id);
-
-      // Generate Maya's response
-      const response = await generateMayaResponse({
-              lead,
-              messages,
-              latestMessage: messageBody
-      });
-
-      // Send SMS reply
-      if (response.message) {
-              const sent = await sendSMS(lead.phone, response.message);
-
-            // Save outbound message
-            await saveMessage({
-                      conversationId: conversation.id,
-                      leadId: lead.id,
-                      direction: 'outbound',
-                      content: response.message,
-                      twilioSid: sent.sid,
-                      status: 'sent'
-            });
-      }
-
-      // Update conversation summary
-      if (response.summary) {
-              await updateConversationSummary(conversation.id, response.summary);
-      }
-
-      // Update lead status if suggested
-      if (response.suggestedStatus) {
-              await updateLeadStatus(lead.id, response.suggestedStatus);
-      }
-
-      // Update lead score
-      const allMessages = await getConversationMessages(conversation.id);
-          const score = calculateLeadScore(lead, allMessages);
-          await updateLeadScore(lead.id, score);
-
-      logger.info('Processed inbound SMS successfully', { leadId: lead.id, intent: response.intent });
-    } catch (error) {
-          logger.error('Error processing inbound SMS:', error);
-    }
+async function sendInitialOutreach(phoneNumber, leadName, leadInfo = {}) {
+  logger.info('Sending initial outreach', { phoneNumber, leadName });
+  try {
+    const lead = await getOrCreateLead(phoneNumber, { name: leadName, ...leadInfo });
+    const completion = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: getMayaPrompt(lead) },
+        { role: 'user', content: 'Send initial outreach SMS to ' + leadName + ' who just submitted a lead form for private label clothing.' }
+      ],
+      max_tokens: 200,
+      temperature: 0.7
+    });
+    const message = completion.choices[0].message.content.trim();
+    await sendSMS(phoneNumber, message);
+    await updateLeadStatus(phoneNumber, 'contacted');
+    return { success: true, message };
+  } catch (error) {
+    logger.error('Error sending initial outreach', { error: error.message, phoneNumber });
+    throw error;
+  }
 }
 
-function buildConversationHistory(messages) {
-    if (!messages || messages.length === 0) return [];
-    return messages.slice(-10).map(msg => ({
-          role: msg.direction === 'inbound' ? 'user' : 'assistant',
-          content: msg.content
-    }));
+async function analyzeIntent(message) {
+  try {
+    const completion = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { role: 'system', content: 'Analyze SMS intent. Return comma-separated from: interested, not_interested, qualified, unsubscribe, stop, onboarding, question, other.' },
+        { role: 'user', content: message }
+      ],
+      max_tokens: 50
+    });
+    return completion.choices[0].message.content.trim().toLowerCase();
+  } catch { return 'other'; }
 }
 
-module.exports = { generateMayaResponse, processInboundSMS };
+module.exports = { processInboundSMS, sendInitialOutreach };
