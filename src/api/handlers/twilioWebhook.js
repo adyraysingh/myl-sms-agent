@@ -1,49 +1,56 @@
-const { processInboundSMS } = require('../../agents/mayaAgent');
-const { findOrCreateConversation } = require('../../database/conversations');
-const { findLeadByPhone } = require('../../database/leads');
-const { saveMessage } = require('../../database/messages');
+const { processInboundSMS } = require('../../agents/mayaSmsAgent');
 const logger = require('../../utils/logger');
 
-async function handleInboundSMS(body) {
-    const { From, To, Body, MessageSid } = body;
-
+// CallHippo webhook for inbound SMS events
+async function handleCallHippoWebhook(req, res) {
   try {
-        logger.info('Processing inbound SMS', { from: From, to: To, messageSid: MessageSid });
+    const event = req.body;
+    logger.info('CallHippo webhook received', { event });
 
-      // Handle STOP/UNSUBSCRIBE opt-out
-      const stopKeywords = ['STOP', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'];
-        if (stopKeywords.includes(Body.trim().toUpperCase())) {
-                logger.info('Opt-out received', { from: From });
-                // TODO: Mark lead as opted out in database
-          return;
+    // CallHippo sends SMS events with these fields
+    const eventType = event.type || event.event_type;
+    
+    // Handle inbound SMS
+    if (eventType === 'sms.received' || eventType === 'inbound_sms' || event.direction === 'inbound') {
+      const from = event.from || event.caller || event.sender;
+      const body = event.message || event.text || event.body;
+      const to = event.to || event.receiver || process.env.CALLHIPPO_VIRTUAL_NUMBER;
+
+      if (!from || !body) {
+        logger.warn('CallHippo webhook missing from/body', { event });
+        return res.status(200).json({ success: true, message: 'skipped - missing fields' });
+      }
+
+      logger.info('Inbound SMS received', { from, body, to });
+
+      // Process asynchronously - respond to CallHippo immediately
+      setImmediate(async () => {
+        try {
+          await processInboundSMS(from, body, to);
+        } catch (err) {
+          logger.error('Error processing inbound SMS', { error: err.message, from });
         }
-
-      // Find the lead by phone
-      const lead = await findLeadByPhone(From);
-        if (!lead) {
-                logger.warn('Inbound SMS from unknown number', { from: From });
-                return;
-        }
-
-      // Get or create conversation
-      const conversation = await findOrCreateConversation(lead.id);
-
-      // Save inbound message
-      await saveMessage({
-              conversationId: conversation.id,
-              leadId: lead.id,
-              direction: 'inbound',
-              content: Body,
-              twilioSid: MessageSid,
-              status: 'received'
       });
 
-      // Process with Maya AI agent
-      await processInboundSMS(lead, conversation, Body);
+      return res.status(200).json({ success: true, message: 'SMS processing initiated' });
+    }
+
+    // Handle SMS delivery status updates
+    if (eventType === 'sms.delivered' || eventType === 'sms.failed' || eventType === 'sms.sent') {
+      logger.info('SMS status update', { 
+        messageId: event.message_id || event.id, 
+        status: eventType 
+      });
+      return res.status(200).json({ success: true });
+    }
+
+    logger.info('Unhandled CallHippo event type', { eventType });
+    return res.status(200).json({ success: true, message: 'event acknowledged' });
 
   } catch (error) {
-        logger.error('Error handling inbound SMS:', { error: error.message, from: From });
+    logger.error('CallHippo webhook error', { error: error.message, stack: error.stack });
+    return res.status(200).json({ success: false, error: error.message });
   }
 }
 
-module.exports = { handleInboundSMS };
+module.exports = { handleCallHippoWebhook };
