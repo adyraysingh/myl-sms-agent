@@ -4,10 +4,10 @@ const { handleTwilioInbound, handleCallHippoWebhook } = require('./handlers/twil
 const { handleZohoWebhook } = require('./handlers/zohoWebhook');
 const { handleOnboardingWebhook } = require('./handlers/onboardingWebhook');
 
-// Twilio inbound SMS webhook (used by Twilio Messaging Service)
+// Twilio inbound SMS webhook (Twilio Messaging Service posts here)
 router.post('/twilio/inbound', handleTwilioInbound);
 
-// Legacy CallHippo routes (kept for backward compatibility)
+// Legacy CallHippo routes (backward compat)
 router.post('/callhippo/sms', handleCallHippoWebhook);
 router.post('/callhippo/event', handleCallHippoWebhook);
 
