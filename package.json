@@ -1,7 +1,7 @@
 {
   "name": "myl-sms-agent",
   "version": "1.0.0",
-  "description": "MakeYourLabel AI SMS Sales Agent - Maya (CallHippo)",
+  "description": "MakeYourLabel AI SMS Sales Agent - Maya (Twilio)",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
@@ -18,6 +18,7 @@
     "node-cron": "^3.0.3",
     "openai": "^4.20.1",
     "pg": "^8.11.3",
+    "twilio": "^5.0.0",
     "winston": "^3.11.0"
   },
   "devDependencies": {
