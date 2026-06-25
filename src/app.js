@@ -34,6 +34,9 @@ const path = require('path');
 const executiveRoutes = require('./intelligence/routes/executive.routes');
 const salesRoutes = require('./intelligence/routes/sales.routes');
 
+// Phase 7: AI Investigation Engine
+const investigationRoutes = require('./intelligence/routes/investigation.routes');
+
 const app = express();
 
 // Security middleware
@@ -42,11 +45,11 @@ app.use(cors({ origin: process.env.ALLOWED_ORIGINS || '*' }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { error: 'Too many requests, please try again later.' },
-  standardHeaders: true,
-  legacyHeaders: false,
+windowMs: 15 * 60 * 1000,
+max: 100,
+message: { error: 'Too many requests, please try again later.' },
+standardHeaders: true,
+legacyHeaders: false,
 });
 app.use(limiter);
 
@@ -59,31 +62,31 @@ app.use(requestLogger);
 
 // Bootstrap Phase 2: Business Memory Engine
 bootstrapMemory().catch(err => {
-  logger.error('[app] Memory bootstrap failed:', err.message);
+logger.error('[app] Memory bootstrap failed:', err.message);
 });
 
 // Bootstrap Phase 3: Conversation Intelligence Engine
 bootstrapIntelligence().catch(err => {
-  logger.error('[app] Intelligence bootstrap failed:', err.message);
+logger.error('[app] Intelligence bootstrap failed:', err.message);
 });
 
 // Bootstrap Phase 4: Onboarding Qualification Engine
 bootstrapQualification().catch(err => {
-  logger.error('[app] Qualification bootstrap failed:', err.message);
+logger.error('[app] Qualification bootstrap failed:', err.message);
 });
 
 // Bootstrap Phase 5: AI Decision Engine (run migration async)
 (async () => {
-  try {
-    const migrationPath = path.join(__dirname, 'decisions', 'db', 'migrations', '004_ai_decisions.sql');
-    const sql = fs.readFileSync(migrationPath, 'utf8');
-    await pool.query(sql);
-    console.log('[DecisionEngine] Phase 5 migration: SUCCESS');
-    DecisionProcessor.startQueueProcessor(30000);
-    console.log('[DecisionEngine] Phase 5 AI Decision Engine initialized successfully');
-  } catch (err) {
-    logger.error('[app] Decision Engine initialization failed:', err.message);
-  }
+try {
+const migrationPath = path.join(__dirname, 'decisions', 'db', 'migrations', '004_ai_decisions.sql');
+const sql = fs.readFileSync(migrationPath, 'utf8');
+await pool.query(sql);
+console.log('[DecisionEngine] Phase 5 migration: SUCCESS');
+DecisionProcessor.startQueueProcessor(30000);
+console.log('[DecisionEngine] Phase 5 AI Decision Engine initialized successfully');
+} catch (err) {
+logger.error('[app] Decision Engine initialization failed:', err.message);
+}
 })();
 
 // Existing routes (preserved)
@@ -99,14 +102,14 @@ app.use('/api/conversations', conversationRoutes);
 
 // Phase 3: Lead conversations endpoint
 app.get('/api/leads/:id/conversations', async (req, res) => {
-  try {
-    const ConversationAnalysis = require('./intelligence/models/ConversationAnalysis');
-    const analyses = await ConversationAnalysis.findByLeadId(req.params.id);
-    const latest = await ConversationAnalysis.getLatestForLead(req.params.id);
-    res.json({ success: true, lead_id: req.params.id, conversations: analyses, latest_analysis: latest, count: analyses.length });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+const ConversationAnalysis = require('./intelligence/models/ConversationAnalysis');
+const analyses = await ConversationAnalysis.findByLeadId(req.params.id);
+const latest = await ConversationAnalysis.getLatestForLead(req.params.id);
+res.json({ success: true, lead_id: req.params.id, conversations: analyses, latest_analysis: latest, count: analyses.length });
+} catch (err) {
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // Phase 4: Qualification API
@@ -114,15 +117,15 @@ app.use('/api/qualification', qualificationRoutes);
 
 // Phase 4: Lead qualification shortcut endpoint
 app.get('/api/leads/:id/qualification', async (req, res) => {
-  try {
-    const LeadQualification = require('./qualification/models/LeadQualification');
-    const QualificationHistory = require('./qualification/models/QualificationHistory');
-    const qual = await LeadQualification.findByLeadId(req.params.id);
-    const history = await QualificationHistory.getByLeadId(req.params.id, 10);
-    res.json({ success: true, lead_id: req.params.id, qualification: qual, history, history_count: history.length });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+const LeadQualification = require('./qualification/models/LeadQualification');
+const QualificationHistory = require('./qualification/models/QualificationHistory');
+const qual = await LeadQualification.findByLeadId(req.params.id);
+const history = await QualificationHistory.getByLeadId(req.params.id, 10);
+res.json({ success: true, lead_id: req.params.id, qualification: qual, history, history_count: history.length });
+} catch (err) {
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // Phase 5: AI Decision Engine API routes
@@ -130,18 +133,18 @@ app.use('/api/decisions', decisionRoutes);
 
 // Phase 5: Lead decisions endpoint
 app.get('/api/leads/:leadId/decisions', async (req, res) => {
-  try {
-    const decisions = await AIDecision.findByLeadId(req.params.leadId, {
-      limit: parseInt(req.query.limit) || 20,
-      offset: parseInt(req.query.offset) || 0,
-      status: req.query.status,
-      priority: req.query.priority
-    });
-    const history = await DecisionHistory.getByLeadId(req.params.leadId, { limit: 50 });
-    res.json({ success: true, lead_id: req.params.leadId, decisions, history, count: decisions.length });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+const decisions = await AIDecision.findByLeadId(req.params.leadId, {
+limit: parseInt(req.query.limit) || 20,
+offset: parseInt(req.query.offset) || 0,
+status: req.query.status,
+priority: req.query.priority
+});
+const history = await DecisionHistory.getByLeadId(req.params.leadId, { limit: 50 });
+res.json({ success: true, lead_id: req.params.leadId, decisions, history, count: decisions.length });
+} catch (err) {
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // Phase 6: Executive Intelligence routes
@@ -150,10 +153,12 @@ app.use('/api/executive', executiveRoutes);
 // Phase 6: Sales Intelligence routes
 app.use('/api/sales', salesRoutes);
 
+// Phase 7: AI Investigation Engine routes
+app.use('/api/investigations', investigationRoutes);
 
 // 404 handler
 app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
+res.status(404).json({ error: 'Not found' });
 });
 
 // Error handler
