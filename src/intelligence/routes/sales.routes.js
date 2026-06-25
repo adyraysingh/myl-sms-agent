@@ -7,7 +7,7 @@ const SalesPerformanceEngine = require('../services/SalesPerformanceEngine');
 const IntelligenceProcessor = require('../services/IntelligenceProcessor');
 const pool = require('../../memory/db/pool');
 
-// GET /api/sales/performance - all or specific owner
+// GET /api/sales/performance
 router.get('/performance', async (req, res) => {
   try {
     const { owner_id, date, limit } = req.query;
@@ -25,7 +25,7 @@ router.get('/performance', async (req, res) => {
   }
 });
 
-// GET /api/sales/coaching - coaching suggestions
+// GET /api/sales/coaching
 router.get('/coaching', async (req, res) => {
   try {
     const { owner_id, limit } = req.query;
@@ -36,7 +36,7 @@ router.get('/coaching', async (req, res) => {
   }
 });
 
-// GET /api/sales/trends - metric trends over time
+// GET /api/sales/trends
 router.get('/trends', async (req, res) => {
   try {
     const { owner_id, days } = req.query;
@@ -46,7 +46,7 @@ router.get('/trends', async (req, res) => {
       data = await SalesPerformance.getTrend(owner_id, d);
     } else {
       const result = await pool.query(
-        'SELECT * FROM sales_performance WHERE period_type = $1 AND period_date >= CURRENT_DATE - $2 ORDER BY period_date DESC, owner_id',
+        'SELECT * FROM sales_performance WHERE period_type = $1 AND period_date >= CURRENT_DATE - MAKE_INTERVAL(days => $2) ORDER BY period_date DESC, owner_id',
         ['daily', d]
       );
       data = result.rows;
@@ -57,7 +57,7 @@ router.get('/trends', async (req, res) => {
   }
 });
 
-// GET /api/sales/top-performers - today's top performers
+// GET /api/sales/top-performers
 router.get('/top-performers', async (req, res) => {
   try {
     const { date, limit } = req.query;
@@ -81,7 +81,7 @@ router.get('/needs-attention', async (req, res) => {
   }
 });
 
-// POST /api/sales/recalculate - trigger recalculation
+// POST /api/sales/recalculate
 router.post('/recalculate', async (req, res) => {
   try {
     const { date } = req.body;
