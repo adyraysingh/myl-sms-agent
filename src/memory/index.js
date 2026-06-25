@@ -1,5 +1,5 @@
 const pool = require('./db/pool');
-const runMigrations = require('./db/migrations/runner');
+const { runMigrations } = require('./db/migrations/runner');
 
 // Lazy-load models and services to avoid startup errors
 async function bootstrapMemory() {
