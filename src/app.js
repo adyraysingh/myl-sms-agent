@@ -8,6 +8,11 @@ const { requestLogger } = require('./middleware/requestLogger');
 const { errorHandler } = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
 
+// Phase 2: Business Memory Engine
+const memoryRoutes = require('./memory/routes/memory.routes');
+const ingestRoutes = require('./memory/routes/ingest.routes');
+const { bootstrapMemory } = require('./memory');
+
 const app = express();
 
 // Security middleware
@@ -31,9 +36,20 @@ app.use(express.urlencoded({ extended: true }));
 // Request logging
 app.use(requestLogger);
 
-// Routes
+// Bootstrap Business Memory Engine
+bootstrapMemory().catch(err => {
+  logger.error('[app] Memory bootstrap failed:', err.message);
+});
+
+// Existing routes (preserved)
 app.use('/webhooks', webhookRoutes);
 app.use('/', healthRoutes);
+
+// Phase 2: Memory API routes
+app.use('/api/memory', memoryRoutes);
+
+// Phase 2: Intelligence webhook ingest routes
+app.use('/webhooks/intelligence', ingestRoutes);
 
 // 404 handler
 app.use((req, res) => {
