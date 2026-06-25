@@ -36,7 +36,7 @@ router.get('/coaching', async (req, res) => {
   }
 });
 
-// GET /api/sales/trends
+// GET /api/sales/trends - fixed date comparison
 router.get('/trends', async (req, res) => {
   try {
     const { owner_id, days } = req.query;
@@ -45,9 +45,12 @@ router.get('/trends', async (req, res) => {
     if (owner_id) {
       data = await SalesPerformance.getTrend(owner_id, d);
     } else {
+      const daysAgo = new Date();
+      daysAgo.setDate(daysAgo.getDate() - d);
+      const cutoff = daysAgo.toISOString().split('T')[0];
       const result = await pool.query(
-        'SELECT * FROM sales_performance WHERE period_type = $1 AND period_date >= CURRENT_DATE - MAKE_INTERVAL(days => $2) ORDER BY period_date DESC, owner_id',
-        ['daily', d]
+        'SELECT * FROM sales_performance WHERE period_type = $1 AND period_date >= $2 ORDER BY period_date DESC, owner_id',
+        ['daily', cutoff]
       );
       data = result.rows;
     }
