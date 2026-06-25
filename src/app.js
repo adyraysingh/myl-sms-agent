@@ -17,6 +17,10 @@ const { bootstrapMemory } = require('./memory');
 const conversationRoutes = require('./intelligence/routes/conversation.routes');
 const { bootstrapIntelligence } = require('./intelligence');
 
+// Phase 4: Onboarding Qualification Engine
+const qualificationRoutes = require('./qualification/routes/qualification.routes');
+const { bootstrapQualification } = require('./qualification');
+
 const app = express();
 
 // Security middleware
@@ -33,7 +37,7 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// JSON parsing for routes
+// JSON parsing
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -50,32 +54,45 @@ bootstrapIntelligence().catch(err => {
   logger.error('[app] Intelligence bootstrap failed:', err.message);
 });
 
-// Existing routes (preserved - do not modify)
+// Bootstrap Phase 4: Onboarding Qualification Engine
+bootstrapQualification().catch(err => {
+  logger.error('[app] Qualification bootstrap failed:', err.message);
+});
+
+// Existing routes (preserved)
 app.use('/webhooks', webhookRoutes);
 app.use('/', healthRoutes);
 
 // Phase 2: Memory API routes
 app.use('/api/memory', memoryRoutes);
-
-// Phase 2: Intelligence webhook ingest routes
 app.use('/webhooks/intelligence', ingestRoutes);
 
-// Phase 3: Conversation Intelligence API routes
+// Phase 3: Conversation Intelligence API
 app.use('/api/conversations', conversationRoutes);
 
-// Phase 3: Lead conversations endpoint (nested resource)
+// Phase 3: Lead conversations endpoint
 app.get('/api/leads/:id/conversations', async (req, res) => {
   try {
     const ConversationAnalysis = require('./intelligence/models/ConversationAnalysis');
     const analyses = await ConversationAnalysis.findByLeadId(req.params.id);
     const latest = await ConversationAnalysis.getLatestForLead(req.params.id);
-    res.json({
-      success: true,
-      lead_id: req.params.id,
-      conversations: analyses,
-      latest_analysis: latest,
-      count: analyses.length
-    });
+    res.json({ success: true, lead_id: req.params.id, conversations: analyses, latest_analysis: latest, count: analyses.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Phase 4: Qualification API
+app.use('/api/qualification', qualificationRoutes);
+
+// Phase 4: Lead qualification shortcut endpoint
+app.get('/api/leads/:id/qualification', async (req, res) => {
+  try {
+    const LeadQualification = require('./qualification/models/LeadQualification');
+    const QualificationHistory = require('./qualification/models/QualificationHistory');
+    const qual = await LeadQualification.findByLeadId(req.params.id);
+    const history = await QualificationHistory.getByLeadId(req.params.id, 10);
+    res.json({ success: true, lead_id: req.params.id, qualification: qual, history, history_count: history.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
