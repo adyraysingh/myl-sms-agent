@@ -21,6 +21,9 @@ const { bootstrapIntelligence } = require('./intelligence');
 const qualificationRoutes = require('./qualification/routes/qualification.routes');
 const { bootstrapQualification } = require('./qualification');
 
+// Phase 5: AI Decision Engine
+const { initializeDecisionEngine } = require('./decisions');
+
 const app = express();
 
 // Security middleware
@@ -57,6 +60,11 @@ bootstrapIntelligence().catch(err => {
 // Bootstrap Phase 4: Onboarding Qualification Engine
 bootstrapQualification().catch(err => {
   logger.error('[app] Qualification bootstrap failed:', err.message);
+});
+
+// Phase 5: AI Decision Engine (routes mounted inside: /api/decisions, /api/leads/:leadId/decisions)
+initializeDecisionEngine(app).catch(err => {
+    logger.error('[app] Decision Engine initialization failed:', err.message);
 });
 
 // Existing routes (preserved)
