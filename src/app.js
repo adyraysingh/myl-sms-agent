@@ -22,7 +22,13 @@ const qualificationRoutes = require('./qualification/routes/qualification.routes
 const { bootstrapQualification } = require('./qualification');
 
 // Phase 5: AI Decision Engine
-const { initializeDecisionEngine } = require('./decisions');
+const decisionRoutes = require('./decisions/routes/decision.routes');
+const AIDecision = require('./decisions/models/AIDecision');
+const DecisionHistory = require('./decisions/models/DecisionHistory');
+const DecisionProcessor = require('./decisions/services/DecisionProcessor');
+const pool = require('./memory/db/pool');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -62,10 +68,19 @@ bootstrapQualification().catch(err => {
   logger.error('[app] Qualification bootstrap failed:', err.message);
 });
 
-// Phase 5: AI Decision Engine (routes mounted inside: /api/decisions, /api/leads/:leadId/decisions)
-initializeDecisionEngine(app).catch(err => {
+// Bootstrap Phase 5: AI Decision Engine (run migration async)
+(async () => {
+  try {
+    const migrationPath = path.join(__dirname, 'decisions', 'db', 'migrations', '004_ai_decisions.sql');
+    const sql = fs.readFileSync(migrationPath, 'utf8');
+    await pool.query(sql);
+    console.log('[DecisionEngine] Phase 5 migration: SUCCESS');
+    DecisionProcessor.startQueueProcessor(30000);
+    console.log('[DecisionEngine] Phase 5 AI Decision Engine initialized successfully');
+  } catch (err) {
     logger.error('[app] Decision Engine initialization failed:', err.message);
-});
+  }
+})();
 
 // Existing routes (preserved)
 app.use('/webhooks', webhookRoutes);
@@ -101,6 +116,25 @@ app.get('/api/leads/:id/qualification', async (req, res) => {
     const qual = await LeadQualification.findByLeadId(req.params.id);
     const history = await QualificationHistory.getByLeadId(req.params.id, 10);
     res.json({ success: true, lead_id: req.params.id, qualification: qual, history, history_count: history.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Phase 5: AI Decision Engine API routes
+app.use('/api/decisions', decisionRoutes);
+
+// Phase 5: Lead decisions endpoint
+app.get('/api/leads/:leadId/decisions', async (req, res) => {
+  try {
+    const decisions = await AIDecision.findByLeadId(req.params.leadId, {
+      limit: parseInt(req.query.limit) || 20,
+      offset: parseInt(req.query.offset) || 0,
+      status: req.query.status,
+      priority: req.query.priority
+    });
+    const history = await DecisionHistory.getByLeadId(req.params.leadId, { limit: 50 });
+    res.json({ success: true, lead_id: req.params.leadId, decisions, history, count: decisions.length });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
