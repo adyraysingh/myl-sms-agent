@@ -13,6 +13,7 @@ const memoryRoutes = require('./memory/routes/memory.routes');
 const ingestRoutes = require('./memory/routes/ingest.routes');
 const { bootstrapMemory } = require('./memory');
 
+// Phase 2: Foundation complete - Business Memory Engine
 const app = express();
 
 // Security middleware
