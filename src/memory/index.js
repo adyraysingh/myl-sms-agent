@@ -1,6 +1,7 @@
 const pool = require('./db/pool');
 const runMigrations = require('./db/migrations/runner');
 
+// Lazy-load models and services to avoid startup errors
 async function bootstrapMemory() {
   try {
     console.log('[Memory] Bootstrapping Business Memory Engine...');
@@ -15,18 +16,18 @@ async function bootstrapMemory() {
 
 module.exports = {
   bootstrapMemory,
-  LeadMemory: require('./models/LeadMemory'),
-  LeadEvent: require('./models/LeadEvent'),
-  EmailEvent: require('./models/EmailEvent'),
-  Conversation: require('./models/Conversation'),
-  RetellCall: require('./models/RetellCall'),
-  SalesIQChat: require('./models/SalesIQChat'),
-  CRMTask: require('./models/CRMTask'),
-  CRMNote: require('./models/CRMNote'),
-  FollowUp: require('./models/FollowUp'),
-  MemoryService: require('./services/MemoryService'),
-  TimelineService: require('./services/TimelineService'),
-  ProfileService: require('./services/ProfileService'),
-  memoryRoutes: require('./routes/memory.routes'),
-  ingestRoutes: require('./routes/ingest.routes')
+  get LeadMemory() { return require('./models/LeadMemory'); },
+  get LeadEvent() { return require('./models/LeadEvent'); },
+  get EmailEvent() { return require('./models/EmailEvent'); },
+  get Conversation() { return require('./models/Conversation'); },
+  get RetellCall() { return require('./models/RetellCall'); },
+  get SalesIQChat() { return require('./models/SalesIQChat'); },
+  get CRMTask() { return require('./models/CRMTask'); },
+  get CRMNote() { return require('./models/CRMNote'); },
+  get FollowUp() { return require('./models/FollowUp'); },
+  get MemoryService() { return require('./services/MemoryService'); },
+  get TimelineService() { return require('./services/TimelineService'); },
+  get ProfileService() { return require('./services/ProfileService'); },
+  get memoryRoutes() { return require('./routes/memory.routes'); },
+  get ingestRoutes() { return require('./routes/ingest.routes'); }
 };
