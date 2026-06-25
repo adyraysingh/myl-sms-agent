@@ -30,6 +30,10 @@ const pool = require('./memory/db/pool');
 const fs = require('fs');
 const path = require('path');
 
+// Phase 6: Sales Intelligence & Executive Intelligence
+const executiveRoutes = require('./intelligence/routes/executive.routes');
+const salesRoutes = require('./intelligence/routes/sales.routes');
+
 const app = express();
 
 // Security middleware
@@ -139,6 +143,13 @@ app.get('/api/leads/:leadId/decisions', async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Phase 6: Executive Intelligence routes
+app.use('/api/executive', executiveRoutes);
+
+// Phase 6: Sales Intelligence routes
+app.use('/api/sales', salesRoutes);
+
 
 // 404 handler
 app.use((req, res) => {
