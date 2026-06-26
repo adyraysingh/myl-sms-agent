@@ -59,21 +59,64 @@ class ExecutiveBriefingEngine {
   static async _collectData(period_start, period_end) {
     const client = await pool.connect();
     try {
-      const leadQ = await client.query('SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE qualification_category = $1) as hot, COUNT(*) FILTER (WHERE qualification_category = $2) as warm, COUNT(*) FILTER (WHERE qualification_category = $3) as onboarded, COUNT(*) FILTER (WHERE qualification_category IN ($4,$5)) as lost FROM lead_memory lm LEFT JOIN lead_qualification lq ON lq.lead_id = lm.lead_id', ['Hot','Warm','Onboarded','Dead','Cold']);
-      const qualQ = await client.query('SELECT qualification_category, COUNT(*) as count, AVG(onboarding_score) as avg_score FROM lead_qualification GROUP BY qualification_category ORDER BY count DESC');
-      const convQ = await client.query('SELECT sentiment, COUNT(*) as count, AVG(trust_score) as avg_trust FROM conversation_analysis WHERE analyzed_at BETWEEN $1 AND $2 GROUP BY sentiment', [period_start, period_end]);
-      const decQ = await client.query('SELECT COUNT(*) FILTER (WHERE priority = $1 AND status = $2) as critical_pending, COUNT(*) FILTER (WHERE status = $3) as completed_today, COUNT(*) as total FROM ai_decisions WHERE created_at BETWEEN $4 AND $5', ['critical','pending','completed',period_start, period_end]);
-      const salesQ = await client.query('SELECT owner_name, productivity_score, onboarding_rate, follow_up_completion_rate, follow_ups_missed, performance_trend FROM sales_performance WHERE period_date = CURRENT_DATE ORDER BY productivity_score DESC LIMIT 10');
-      const invQ = await client.query('SELECT COUNT(*) as count FROM business_investigations WHERE created_at > NOW() - INTERVAL' + " '24 hours'");
-      const ls = leadQ.rows[0] || {};
+      // FIXED: lead_memory uses 'id' not 'lead_id'; lead_qualification joins on lead_memory.id
+      // Count all leads directly from Business Memory (authoritative source)
+      const leadCountQ = await client.query(
+        'SELECT COUNT(*) as total, ' +
+        'COUNT(*) FILTER (WHERE is_onboarded = true) as onboarded ' +
+        'FROM lead_memory'
+      );
+
+      // Count qualified leads by category (left join in case no qualifications exist)
+      const leadQ = await client.query(
+        'SELECT ' +
+        'COUNT(*) FILTER (WHERE lq.category = $1) as hot, ' +
+        'COUNT(*) FILTER (WHERE lq.category = $2) as warm, ' +
+        'COUNT(*) FILTER (WHERE lq.category IN ($3,$4)) as lost ' +
+        'FROM lead_memory lm LEFT JOIN lead_qualification lq ON lq.lead_id = lm.id',
+        ['hot', 'warm', 'dead', 'cold']
+      );
+
+      const qualQ = await client.query(
+        'SELECT category, COUNT(*) as count, AVG(onboarding_score) as avg_score ' +
+        'FROM lead_qualification GROUP BY category ORDER BY count DESC'
+      );
+      const convQ = await client.query(
+        'SELECT sentiment, COUNT(*) as count, AVG(trust_score) as avg_trust ' +
+        'FROM conversation_analysis WHERE analyzed_at BETWEEN $1 AND $2 GROUP BY sentiment',
+        [period_start, period_end]
+      );
+      const decQ = await client.query(
+        'SELECT COUNT(*) FILTER (WHERE priority = $1 AND status = $2) as critical_pending, ' +
+        'COUNT(*) FILTER (WHERE status = $3) as completed_today, ' +
+        'COUNT(*) as total FROM ai_decisions WHERE created_at BETWEEN $4 AND $5',
+        ['critical', 'pending', 'completed', period_start, period_end]
+      );
+      const salesQ = await client.query(
+        'SELECT owner_name, productivity_score, onboarding_rate, follow_up_completion_rate, ' +
+        'follow_ups_missed, performance_trend FROM sales_performance ' +
+        'WHERE period_date = CURRENT_DATE ORDER BY productivity_score DESC LIMIT 10'
+      );
+      const invQ = await client.query(
+        "SELECT COUNT(*) as count FROM business_investigations WHERE created_at > NOW() - INTERVAL '24 hours'"
+      );
+
+      const lc = leadCountQ.rows[0] || {};
+      const lq = leadQ.rows[0] || {};
       return {
-        leadStats: { total: parseInt(ls.total)||0, hot: parseInt(ls.hot)||0, warm: parseInt(ls.warm)||0, onboarded: parseInt(ls.onboarded)||0, lost: parseInt(ls.lost)||0 },
+        leadStats: {
+          total: parseInt(lc.total) || 0,
+          hot: parseInt(lq.hot) || 0,
+          warm: parseInt(lq.warm) || 0,
+          onboarded: parseInt(lc.onboarded) || 0,
+          lost: parseInt(lq.lost) || 0
+        },
         qualBreakdown: qualQ.rows,
         convStats: convQ.rows,
         decisionStats: decQ.rows[0] || {},
         salesStats: salesQ.rows,
-        investigationCount: parseInt(invQ.rows[0].count)||0,
-        criticalDecisions: parseInt((decQ.rows[0]||{}).critical_pending)||0
+        investigationCount: parseInt(invQ.rows[0].count) || 0,
+        criticalDecisions: parseInt((decQ.rows[0] || {}).critical_pending) || 0
       };
     } finally {
       client.release();
@@ -86,11 +129,15 @@ class ExecutiveBriefingEngine {
     const hotRate = (leadStats.hot / total) * 100;
     const onboardRate = (leadStats.onboarded / total) * 100;
     const qualHealth = Math.min(100, (hotRate * 2) + (onboardRate * 3));
-    const avgProductivity = salesStats.length > 0 ? salesStats.reduce((s, r) => s + (parseFloat(r.productivity_score)||0), 0) / salesStats.length : 50;
+    const avgProductivity = salesStats.length > 0
+      ? salesStats.reduce((s, r) => s + (parseFloat(r.productivity_score) || 0), 0) / salesStats.length
+      : 50;
     const positiveSentiment = convStats.find(r => r.sentiment === 'positive');
     const totalConvs = convStats.reduce((s, r) => s + parseInt(r.count), 0) || 1;
-    const convHealth = positiveSentiment ? Math.round((parseInt(positiveSentiment.count) / totalConvs) * 100) : 50;
-    const missedFollowups = salesStats.reduce((s, r) => s + (parseInt(r.follow_ups_missed)||0), 0);
+    const convHealth = positiveSentiment
+      ? Math.round((parseInt(positiveSentiment.count) / totalConvs) * 100)
+      : 50;
+    const missedFollowups = salesStats.reduce((s, r) => s + (parseInt(r.follow_ups_missed) || 0), 0);
     const followupHealth = Math.max(0, 100 - (missedFollowups * 10));
     const overall = Math.round((qualHealth + avgProductivity + convHealth + followupHealth) / 4);
     return {
@@ -105,13 +152,15 @@ class ExecutiveBriefingEngine {
   }
 
   static async _generateNarrative(briefing_type, data, healthScores) {
-    const systemPrompt = 'You are an executive briefing AI for MakeYourLabel, a premium private label clothing manufacturer.' +
+    const systemPrompt =
+      'You are an executive briefing AI for MakeYourLabel, a premium private label clothing manufacturer.' +
       ' Generate a structured executive briefing. Be specific, data-driven, and actionable.' +
       ' Focus on what matters for onboarding new brands.' +
       ' Respond with valid JSON containing: executive_summary, business_summary, onboarding_performance,' +
       ' sales_performance, current_risks (array), current_opportunities (array),' +
       ' top_priorities (array), recommended_actions (array), expected_business_impact.';
-    const userPrompt = 'BRIEFING TYPE: ' + briefing_type +
+    const userPrompt =
+      'BRIEFING TYPE: ' + briefing_type +
       ' | HEALTH: ' + healthScores.overall_health_score + '/100' +
       ' | LEADS: total=' + data.leadStats.total + ' hot=' + data.leadStats.hot + ' warm=' + data.leadStats.warm +
       ' | SALES REPS: ' + data.salesStats.length +
