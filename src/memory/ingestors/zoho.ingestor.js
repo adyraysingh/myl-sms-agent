@@ -41,16 +41,21 @@ class ZohoIngestor {
       if (updated) memory = updated;
     }
 
-    // Record the event
-    await LeadEvent.create({
-      leadId: memory.id,
-      eventType: 'crm_lead_created',
-      eventSource: 'zoho_crm',
-      title: 'Lead created in Zoho CRM',
-      summary: `Lead ${name} created`,
-      rawPayload: payload,
-      occurredAt: payload.Created_Time ? new Date(payload.Created_Time) : new Date()
-    });
+    // Record the event - wrapped in try/catch so lead creation still succeeds
+    try {
+      await LeadEvent.create({
+        leadId: memory.id,
+        eventType: 'crm_lead_created',
+        eventSource: 'zoho_crm',
+        title: 'Lead created in Zoho CRM',
+        summary: `Lead ${name} created`,
+        rawPayload: payload,
+        occurredAt: payload.Created_Time ? new Date(payload.Created_Time) : new Date()
+      });
+    } catch (eventErr) {
+      // Event logging failure is non-critical - lead was already saved
+      console.warn('[ZohoIngestor] Event logging failed (non-critical):', eventErr.message);
+    }
 
     return memory;
   }
@@ -71,14 +76,18 @@ class ZohoIngestor {
       rawPayload: payload
     });
 
-    await LeadEvent.create({
-      leadId,
-      eventType: 'crm_task_created',
-      eventSource: 'zoho_crm',
-      title: payload.Subject || 'Task created',
-      summary: `Task: ${payload.Subject || 'unknown'}`,
-      rawPayload: payload
-    });
+    try {
+      await LeadEvent.create({
+        leadId,
+        eventType: 'crm_task_created',
+        eventSource: 'zoho_crm',
+        title: payload.Subject || 'Task created',
+        summary: `Task: ${payload.Subject || 'unknown'}`,
+        rawPayload: payload
+      });
+    } catch (eventErr) {
+      console.warn('[ZohoIngestor] Task event logging failed (non-critical):', eventErr.message);
+    }
 
     return task;
   }
@@ -96,13 +105,17 @@ class ZohoIngestor {
       rawPayload: payload
     });
 
-    await LeadEvent.create({
-      leadId,
-      eventType: 'crm_note_added',
-      eventSource: 'zoho_crm',
-      title: payload.Note_Title || 'Note added',
-      rawPayload: payload
-    });
+    try {
+      await LeadEvent.create({
+        leadId,
+        eventType: 'crm_note_added',
+        eventSource: 'zoho_crm',
+        title: payload.Note_Title || 'Note added',
+        rawPayload: payload
+      });
+    } catch (eventErr) {
+      console.warn('[ZohoIngestor] Note event logging failed (non-critical):', eventErr.message);
+    }
 
     return note;
   }
