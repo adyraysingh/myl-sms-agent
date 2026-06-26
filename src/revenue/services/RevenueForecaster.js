@@ -8,30 +8,31 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejec
 
 const MODEL_VERSION = '1.0';
 
-// Data Collection — all lead data from Business Memory (lead_memory), authoritative source
+// Data Collection - all lead data from Business Memory (lead_memory), authoritative source
 async function collectBusinessData(periodStart, periodEnd) {
   const start = new Date(periodStart).toISOString();
   const end = new Date(periodEnd).toISOString();
 
   const [leads, qualifications, decisions, conversations, briefings, workflows, learningEvents] = await Promise.all([
-    // FIXED: was 'FROM leads' (legacy) — now uses Business Memory (authoritative source)
-    pool.query('SELECT id, zoho_lead_id, full_name, email, phone, company, pipeline_stage, is_onboarded, lead_owner_id, created_at FROM lead_memory WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC', [start, end]).catch(() => ({ rows: [] })),
-    // FIXED: was 'FROM onboarding_qualifications' (legacy) — now uses lead_qualification
-    pool.query('SELECT * FROM lead_qualification WHERE last_qualified_at BETWEEN $1 AND $2 ORDER BY last_qualified_at DESC', [start, end]).catch(() => ({ rows: [] })),
-    pool.query('SELECT * FROM ai_decisions WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 100', [start, end]).catch(() => ({ rows: [] })),
-    pool.query('SELECT * FROM conversation_analysis WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 100', [start, end]).catch(() => ({ rows: [] })),
-    pool.query('SELECT * FROM executive_briefings ORDER BY created_at DESC LIMIT 5').catch(() => ({ rows: [] })),
-    pool.query('SELECT * FROM automation_workflows WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 50', [start, end]).catch(() => ({ rows: [] })),
-    pool.query('SELECT source_module, prediction_type, AVG(accuracy_score)::NUMERIC(5,2) AS avg_accuracy FROM learning_events WHERE created_at BETWEEN $1 AND $2 GROUP BY source_module, prediction_type', [start, end]).catch(() => ({ rows: [] }))
+    // FIXED: was FROM leads (legacy) - now uses Business Memory (authoritative source)
+    pool.query("SELECT id, zoho_lead_id, full_name, email, phone, company, pipeline_stage, is_onboarded, lead_owner_id, created_at FROM lead_memory WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC", [start, end]).catch(() => ({ rows: [] })),
+    // FIXED: was FROM onboarding_qualifications (legacy) - now uses lead_qualification
+    pool.query("SELECT * FROM lead_qualification WHERE last_qualified_at BETWEEN $1 AND $2 ORDER BY last_qualified_at DESC", [start, end]).catch(() => ({ rows: [] })),
+    pool.query("SELECT * FROM ai_decisions WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 100", [start, end]).catch(() => ({ rows: [] })),
+    pool.query("SELECT * FROM conversation_analysis WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 100", [start, end]).catch(() => ({ rows: [] })),
+    pool.query("SELECT * FROM executive_briefings ORDER BY created_at DESC LIMIT 5").catch(() => ({ rows: [] })),
+    pool.query("SELECT * FROM automation_workflows WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC LIMIT 50", [start, end]).catch(() => ({ rows: [] })),
+    pool.query("SELECT source_module, prediction_type, AVG(accuracy_score)::NUMERIC(5,2) AS avg_accuracy FROM learning_events WHERE created_at BETWEEN $1 AND $2 GROUP BY source_module, prediction_type", [start, end]).catch(() => ({ rows: [] }))
   ]);
 
   // Historical win rate from lead_qualification (was onboarding_qualifications)
-  const historicalWinRateSQL = 'SELECT COUNT(*) FILTER (WHERE category = $1) AS onboarded, COUNT(*) AS total FROM lead_qualification WHERE last_qualified_at >= NOW() - INTERVAL '90 days'';
-  const winRateResult = await pool.query(historicalWinRateSQL, ['onboarded']).catch(() => ({ rows: [{ onboarded: 0, total: 0 }] }));
+  const winRateResult = await pool.query(
+    "SELECT COUNT(*) FILTER (WHERE category = $1) AS onboarded, COUNT(*) AS total FROM lead_qualification WHERE last_qualified_at >= NOW() - INTERVAL '90 days'",
+    ['onboarded']
+  ).catch(() => ({ rows: [{ onboarded: 0, total: 0 }] }));
   const wr = winRateResult.rows[0] || {};
   const historicalWinRate = wr.total > 0 ? parseFloat(wr.onboarded) / parseFloat(wr.total) : 0.15;
 
-  // Average deal value estimation from onboarded leads
   const avgDealValue = 50000;
 
   return {
@@ -49,8 +50,6 @@ async function collectBusinessData(periodStart, periodEnd) {
 
 function computePipelineMetrics(data) {
   const { leads, qualifications } = data;
-
-  // Build qualification lookup by lead_id
   const qualMap = {};
   for (const q of qualifications) {
     qualMap[q.lead_id] = q;
@@ -85,13 +84,7 @@ function computePipelineMetrics(data) {
     unqualified: totalLeads - hotLeads - warmLeads - coldLeads - onboardedLeads
   };
 
-  return {
-    totalPipelineValue,
-    weightedPipelineValue,
-    breakdown,
-    avgDealValue: data.avgDealValue,
-    historicalWinRate: data.historicalWinRate
-  };
+  return { totalPipelineValue, weightedPipelineValue, breakdown, avgDealValue: data.avgDealValue, historicalWinRate: data.historicalWinRate };
 }
 
 class RevenueForecaster {
@@ -135,7 +128,6 @@ class RevenueForecaster {
         start.setDate(1);
         start.setHours(0, 0, 0, 0);
     }
-
     return { start: start.toISOString(), end: end.toISOString() };
   }
 
@@ -157,7 +149,6 @@ class RevenueForecaster {
       { scenario_type: 'conservative_growth', expected_revenue: Math.round(base * 0.80 * 100) / 100, expected_onboardings: Math.floor(baseOnboard * 0.80), confidence: Math.min(95, conf * 0.95), assumptions: ['Conservative conversion', 'Some leads lost to competitors', 'Typical delays'], primary_risks: ['Below target revenue', 'Pipeline shrink'], primary_opportunities: ['Stable foundation', 'Quality focus'], explanation: 'Conservative: accounts for typical pipeline attrition and conversion friction.' }
     ];
 
-    // Generate AI narrative
     let aiResult = null;
     try {
       const prompt = 'You are a revenue intelligence AI. Analyze this B2B private label clothing manufacturer pipeline data and provide a forecast narrative. Data: ' +
@@ -214,7 +205,6 @@ class RevenueForecaster {
       model_version: MODEL_VERSION
     });
 
-    // Save scenarios
     const savedScenarios = [];
     for (const s of scenarios) {
       try {
@@ -253,14 +243,13 @@ class RevenueForecaster {
 
   static async getOpportunities() {
     try {
-      // Get hot and warm leads from Business Memory
       const result = await pool.query(
-        'SELECT lm.id, lm.full_name, lm.company, lm.lead_owner_name, lm.created_at, ' +
-        'lq.category, lq.onboarding_score, lq.onboarding_probability, lq.recommended_next_action, lq.urgency_level ' +
-        'FROM lead_memory lm ' +
-        'JOIN lead_qualification lq ON lq.lead_id = lm.id ' +
+        "SELECT lm.id, lm.full_name, lm.company, lm.lead_owner_name, lm.created_at, " +
+        "lq.category, lq.onboarding_score, lq.onboarding_probability, lq.recommended_next_action, lq.urgency_level " +
+        "FROM lead_memory lm " +
+        "JOIN lead_qualification lq ON lq.lead_id = lm.id " +
         "WHERE lq.category IN ('hot', 'warm') " +
-        'ORDER BY lq.onboarding_score DESC LIMIT 20'
+        "ORDER BY lq.onboarding_score DESC LIMIT 20"
       );
       return result.rows.map(r => ({
         lead_id: r.id,
@@ -282,14 +271,13 @@ class RevenueForecaster {
 
   static async getRisks() {
     try {
-      // Get cold/dead leads and stale hot leads from Business Memory
       const result = await pool.query(
-        'SELECT lm.id, lm.full_name, lm.company, lm.last_contacted_at, ' +
-        'lq.category, lq.onboarding_score, lq.qualification_gaps, lq.urgency_level ' +
-        'FROM lead_memory lm ' +
-        'LEFT JOIN lead_qualification lq ON lq.lead_id = lm.id ' +
+        "SELECT lm.id, lm.full_name, lm.company, lm.last_contacted_at, " +
+        "lq.category, lq.onboarding_score, lq.qualification_gaps, lq.urgency_level " +
+        "FROM lead_memory lm " +
+        "LEFT JOIN lead_qualification lq ON lq.lead_id = lm.id " +
         "WHERE lq.category IN ('cold', 'dead') OR (lm.last_contacted_at < NOW() - INTERVAL '7 days' AND lq.category = 'hot') " +
-        'ORDER BY lq.onboarding_score ASC NULLS LAST LIMIT 20'
+        "ORDER BY lq.onboarding_score ASC NULLS LAST LIMIT 20"
       );
       return result.rows.map(r => ({
         lead_id: r.id,
