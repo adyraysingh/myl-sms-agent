@@ -5,7 +5,6 @@ class WorkflowModel {
 
   static async create({ lead_id, decision_id, workflow_type, priority, assigned_owner,
     trigger_event, trigger_data, actions, conditions, sla_hours, notes, idempotency_key }) {
-    // Idempotency: don't create duplicate workflows for same decision+type
     const ikey = idempotency_key || (decision_id + ':' + workflow_type);
     const r = await pool.query(
       'INSERT INTO automation_workflows (lead_id,decision_id,workflow_type,priority,assigned_owner,' +
@@ -26,18 +25,21 @@ class WorkflowModel {
 
   static async findAll({ status, priority, lead_id, workflow_type, limit = 50, offset = 0 }) {
     const args = [];
-    const conditions = [];
-    if (status) { args.push(status); conditions.push('status=$' + args.length); }
-    if (priority) { args.push(priority); conditions.push('priority=$' + args.length); }
-    if (lead_id) { args.push(lead_id); conditions.push('lead_id=$' + args.length); }
-    if (workflow_type) { args.push(workflow_type); conditions.push('workflow_type=$' + args.length); }
-    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    args.push(limit); args.push(offset);
+    const conds = [];
+    if (status) { args.push(status); conds.push('status=$' + args.length); }
+    if (priority) { args.push(priority); conds.push('priority=$' + args.length); }
+    if (lead_id) { args.push(lead_id); conds.push('lead_id=$' + args.length); }
+    if (workflow_type) { args.push(workflow_type); conds.push('workflow_type=$' + args.length); }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    args.push(parseInt(limit) || 50);
+    args.push(parseInt(offset) || 0);
+    const limitIdx = args.length - 1;
+    const offsetIdx = args.length;
     const r = await pool.query(
       'SELECT * FROM automation_workflows ' + where +
-      ' ORDER BY CASE priority WHEN $1 THEN 1 WHEN $2 THEN 2 WHEN $3 THEN 3 ELSE 4 END, created_at DESC' +
-      ' LIMIT $' + (args.length - 1) + ' OFFSET $' + args.length,
-      ['critical', 'high', 'medium', ...args]
+      ' ORDER BY CASE priority WHEN \'critical\' THEN 1 WHEN \'high\' THEN 2 WHEN \'medium\' THEN 3 ELSE 4 END, created_at DESC' +
+      ' LIMIT $' + limitIdx + ' OFFSET $' + offsetIdx,
+      args
     );
     return r.rows;
   }
@@ -52,16 +54,14 @@ class WorkflowModel {
     if (extra.execution_result) { args.push(JSON.stringify(extra.execution_result)); sets.push('execution_result=$' + args.length); }
     if (extra.retry_count !== undefined) { args.push(extra.retry_count); sets.push('retry_count=$' + args.length); }
     const r = await pool.query(
-      'UPDATE automation_workflows SET ' + sets.join(',') + ' WHERE workflow_id=$1 RETURNING *',
-      args
+      'UPDATE automation_workflows SET ' + sets.join(',') + ' WHERE workflow_id=$1 RETURNING *', args
     );
     return r.rows[0];
   }
 
   static async logExecution({ workflow_id, action, status, result, processing_time_ms, retry_count, error_message }) {
     const r = await pool.query(
-      'INSERT INTO workflow_execution (workflow_id,action,status,result,processing_time_ms,retry_count,error_message) ' +
-      'VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
+      'INSERT INTO workflow_execution (workflow_id,action,status,result,processing_time_ms,retry_count,error_message) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
       [workflow_id, action, status, JSON.stringify(result||{}), processing_time_ms||null, retry_count||0, error_message||null]
     );
     return r.rows[0];
@@ -76,16 +76,12 @@ class WorkflowModel {
   }
 
   static async getAudit(workflow_id) {
-    const r = await pool.query(
-      'SELECT * FROM workflow_audit WHERE workflow_id=$1 ORDER BY timestamp ASC', [workflow_id]
-    );
+    const r = await pool.query('SELECT * FROM workflow_audit WHERE workflow_id=$1 ORDER BY timestamp ASC', [workflow_id]);
     return r.rows;
   }
 
   static async getExecutions(workflow_id) {
-    const r = await pool.query(
-      'SELECT * FROM workflow_execution WHERE workflow_id=$1 ORDER BY executed_at ASC', [workflow_id]
-    );
+    const r = await pool.query('SELECT * FROM workflow_execution WHERE workflow_id=$1 ORDER BY executed_at ASC', [workflow_id]);
     return r.rows;
   }
 
@@ -100,8 +96,7 @@ class WorkflowModel {
 
   static async completeSLA(workflow_id) {
     const r = await pool.query(
-      'UPDATE sla_monitor SET sla_status=$1, actual_completion_time=NOW(), updated_at=NOW() ' +
-      'WHERE workflow_id=$2 AND sla_status=$3 RETURNING *',
+      'UPDATE sla_monitor SET sla_status=$1, actual_completion_time=NOW(), updated_at=NOW() WHERE workflow_id=$2 AND sla_status=$3 RETURNING *',
       ['completed', workflow_id, 'pending']
     );
     return r.rows;
@@ -121,8 +116,7 @@ class WorkflowModel {
 
   static async markSLAEscalated(sla_id, escalated_to, level = 1) {
     const r = await pool.query(
-      'UPDATE sla_monitor SET escalated=true, escalation_level=$1, escalated_at=NOW(), escalated_to=$2, ' +
-      'sla_status=$3, updated_at=NOW() WHERE sla_id=$4 RETURNING *',
+      'UPDATE sla_monitor SET escalated=true, escalation_level=$1, escalated_at=NOW(), escalated_to=$2, sla_status=$3, updated_at=NOW() WHERE sla_id=$4 RETURNING *',
       [level, escalated_to, 'breached', sla_id]
     );
     return r.rows[0];
@@ -130,8 +124,7 @@ class WorkflowModel {
 
   static async getMetrics() {
     const r = await pool.query(
-      'SELECT ' +
-      'COUNT(*) as total, ' +
+      'SELECT COUNT(*) as total, ' +
       'COUNT(*) FILTER (WHERE status=$1) as pending, ' +
       'COUNT(*) FILTER (WHERE status=$2) as running, ' +
       'COUNT(*) FILTER (WHERE status=$3) as completed, ' +
@@ -143,8 +136,7 @@ class WorkflowModel {
       ['pending','running','completed','failed','cancelled']
     );
     const sla = await pool.query(
-      'SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE sla_status=$1) as breached, ' +
-      'COUNT(*) FILTER (WHERE escalated=true) as escalated FROM sla_monitor',
+      'SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE sla_status=$1) as breached, COUNT(*) FILTER (WHERE escalated=true) as escalated FROM sla_monitor',
       ['breached']
     );
     return { workflows: r.rows[0], sla: sla.rows[0] };
@@ -152,8 +144,7 @@ class WorkflowModel {
 
   static async getPendingForRetry() {
     const r = await pool.query(
-      'SELECT * FROM automation_workflows WHERE status=$1 AND retry_count < max_retries ' +
-      'ORDER BY priority DESC, created_at ASC LIMIT 20',
+      'SELECT * FROM automation_workflows WHERE status=$1 AND retry_count < max_retries ORDER BY priority DESC, created_at ASC LIMIT 20',
       ['failed']
     );
     return r.rows;
