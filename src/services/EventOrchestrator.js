@@ -8,15 +8,15 @@
  * the correct downstream modules — no manual API calls required.
  *
  * EVENTS:
- *   lead.created              -> qualify, decision, revenue, intelligence, learning
- *   conversation.analyzed     -> qualify, decision, intelligence, learning
- *   call.completed            -> analyze conversation, qualify, decision, learning
- *   chat.completed            -> analyze conversation, qualify, decision, learning
- *   email.replied             -> qualify, decision, learning
- *   qualification.updated     -> decision, revenue, intelligence, learning
- *   decision.generated        -> workflow (operations), learning
- *   task.completed            -> qualify, learning
- *   onboarding.completed      -> revenue, learning, intelligence
+ *   lead.created         -> qualify, decision, revenue, intelligence, learning, Slack
+ *   conversation.analyzed -> qualify, decision, intelligence, learning
+ *   call.completed       -> analyze conversation, qualify, decision, learning, Slack
+ *   chat.completed       -> analyze conversation, qualify, decision, learning, Slack
+ *   email.replied        -> qualify, decision, learning
+ *   qualification.updated -> decision, revenue, intelligence, learning, Slack (if hot)
+ *   decision.generated   -> workflow (operations), learning, Slack
+ *   task.completed       -> qualify, learning
+ *   onboarding.completed -> revenue, learning, intelligence, Slack
  */
 
 const QualificationProcessor = require('../qualification/services/QualificationProcessor');
@@ -26,6 +26,7 @@ const IntelligenceProcessor   = require('../intelligence/services/IntelligencePr
 const WorkflowEngine          = require('../operations/services/WorkflowEngine');
 const RevenueForecaster       = require('../revenue/services/RevenueForecaster');
 const LearningEngine          = require('../learning/services/LearningEngine');
+const SlackNotifier           = require('./SlackNotifier');
 
 // Debounce map: prevent the same lead from flooding the same pipeline
 const _debounce = new Map();
@@ -91,6 +92,13 @@ class EventOrchestrator {
       }
       EventOrchestrator._scheduleRevenueRefresh();
       IntelligenceProcessor.triggerRefresh('lead_created', { lead_id }).catch(e => console.error('[EO] Intel error:', e.message));
+      // Notify Slack
+      SlackNotifier.notifyLeadCreated({
+        lead_name: payload.lead_name || payload.name || lead_id,
+        crm_owner: payload.crm_owner || payload.owner,
+        zoho_lead_id: zoho_lead_id || payload.zoho_lead_id,
+        lead_id
+      }).catch(e => console.error('[EO] Slack error:', e.message));
     } catch (e) { console.error('[EO] _onLeadCreated:', e.message); }
   }
 
@@ -117,6 +125,16 @@ class EventOrchestrator {
         transcript: typeof transcript === 'string' ? transcript : JSON.stringify(transcript),
         leadInfo: { name: payload.lead_name, email: payload.email, phone: payload.phone }
       });
+      // Notify Slack
+      SlackNotifier.send('call.completed', {
+        title: 'Call Completed',
+        lead_name: payload.lead_name || lead_id,
+        priority: 'medium',
+        assigned_to: payload.crm_owner,
+        zoho_lead_id: zoho_lead_id,
+        next_action: 'Transcript analyzed — qualification and decisions queued automatically',
+        lead_id
+      }).catch(e => console.error('[EO] Slack error:', e.message));
       // ConversationProcessor emits conversation.analyzed when done -> chains automatically
     } catch (e) { console.error('[EO] _onCallCompleted:', e.message); }
   }
@@ -131,6 +149,16 @@ class EventOrchestrator {
         transcript: typeof transcript === 'string' ? transcript : JSON.stringify(transcript),
         leadInfo: { name: payload.visitor_name, email: payload.visitor_email }
       });
+      // Notify Slack
+      SlackNotifier.send('chat.completed', {
+        title: 'Chat Conversation Received',
+        lead_name: payload.visitor_name || lead_id,
+        priority: 'medium',
+        assigned_to: payload.crm_owner,
+        zoho_lead_id: zoho_lead_id,
+        next_action: 'Chat analyzed — qualification and decisions queued automatically',
+        lead_id
+      }).catch(e => console.error('[EO] Slack error:', e.message));
     } catch (e) { console.error('[EO] _onChatCompleted:', e.message); }
   }
 
@@ -155,6 +183,17 @@ class EventOrchestrator {
       if (payload.category_changed) {
         IntelligenceProcessor.triggerRefresh('qualification_updated', { lead_id, category: payload.category }).catch(e => console.error('[EO] Intel error:', e.message));
       }
+      // Notify Slack for hot leads
+      if (payload.category === 'hot' || payload.category_changed) {
+        SlackNotifier.notifyLeadQualified({
+          lead_name: payload.lead_name || lead_id,
+          category: payload.category,
+          qualification_score: payload.qualification_score,
+          crm_owner: payload.crm_owner || payload.owner,
+          zoho_lead_id: zoho_lead_id || payload.zoho_lead_id,
+          lead_id
+        }).catch(e => console.error('[EO] Slack error:', e.message));
+      }
     } catch (e) { console.error('[EO] _onQualificationUpdated:', e.message); }
   }
 
@@ -165,6 +204,19 @@ class EventOrchestrator {
         if (decision.status !== 'dismissed' && decision.status !== 'expired') {
           WorkflowEngine.triggerFromDecision({ ...decision, crm_owner: decision.crm_owner || payload.crm_owner || null })
             .catch(e => console.error('[EO] WorkflowEngine error:', e.message));
+          // Notify Slack for critical/high decisions
+          if (decision.priority === 'critical' || decision.priority === 'high') {
+            SlackNotifier.notifyDecisionGenerated({
+              lead_name: payload.lead_name || lead_id,
+              priority: decision.priority,
+              confidence_score: decision.confidence_score,
+              crm_owner: decision.crm_owner || payload.crm_owner,
+              zoho_lead_id: payload.zoho_lead_id,
+              recommended_action: decision.recommended_action || decision.decision_type,
+              reason: decision.reason,
+              lead_id
+            }).catch(e => console.error('[EO] Slack error:', e.message));
+          }
         }
       }
       EventOrchestrator._maybeTriggerLearning();
@@ -186,6 +238,16 @@ class EventOrchestrator {
       IntelligenceProcessor.triggerRefresh('onboarding_completed', { lead_id }).catch(e => console.error('[EO] Intel error:', e.message));
       _lastLearningEval = 0; // Force learning after real outcome
       EventOrchestrator._maybeTriggerLearning();
+      // Notify Slack
+      SlackNotifier.send('onboarding.completed', {
+        title: 'Onboarding Completed',
+        lead_name: payload.lead_name || lead_id,
+        priority: 'high',
+        assigned_to: payload.crm_owner,
+        zoho_lead_id: payload.zoho_lead_id,
+        next_action: 'Lead onboarded — revenue forecast and learning evaluation triggered',
+        lead_id
+      }).catch(e => console.error('[EO] Slack error:', e.message));
     } catch (e) { console.error('[EO] _onOnboardingCompleted:', e.message); }
   }
 
@@ -195,7 +257,9 @@ class EventOrchestrator {
     if (immediate) {
       if (EventOrchestrator._revenueTimer) { clearTimeout(EventOrchestrator._revenueTimer); EventOrchestrator._revenueTimer = null; }
       const bounds = RevenueForecaster.getPeriodBounds('daily');
-      setImmediate(() => RevenueForecaster.runForecast('daily', bounds.start, bounds.end).catch(e => console.error('[EO] Revenue error:', e.message)));
+      setImmediate(() => RevenueForecaster.runForecast('daily', bounds.start, bounds.end)
+        .then(() => SlackNotifier.notifyRevenueForecastUpdated({ title: 'Revenue Forecast Updated' }).catch(() => {}))
+        .catch(e => console.error('[EO] Revenue error:', e.message)));
       return;
     }
     if (EventOrchestrator._revenueTimer) return;
