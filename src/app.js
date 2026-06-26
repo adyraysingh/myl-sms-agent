@@ -40,6 +40,9 @@ const investigationRoutes = require('./intelligence/routes/investigation.routes'
 // Phase 8: CEO AI Chat & Executive Copilot
 const copilotRoutes = require('./copilot/routes/copilot.routes');
 
+// Phase 9: Continuous Learning Engine
+const learningRoutes = require('./learning/routes/learning.routes');
+
 const app = express();
 
 // Security middleware
@@ -161,6 +164,9 @@ app.use('/api/investigations', investigationRoutes);
 
 // Phase 8: CEO AI Chat & Executive Copilot routes
 app.use('/api/copilot', copilotRoutes);
+
+// Phase 9: Continuous Learning Engine routes
+app.use('/api/learning', learningRoutes);
 
 // 404 handler
 app.use((req, res) => {
