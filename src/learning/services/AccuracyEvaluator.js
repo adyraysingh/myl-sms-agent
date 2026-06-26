@@ -13,9 +13,8 @@ class AccuracyEvaluator {
         'q.updated_at, l.pipeline_stage, l.lead_status ' +
         'FROM onboarding_qualifications q ' +
         'JOIN leads l ON q.lead_id=l.lead_id ' +
-        'WHERE q.updated_at >= NOW() - INTERVAL $1 ' +
-        'LIMIT 200',
-        ['30 days']
+        'WHERE q.updated_at >= NOW() - INTERVAL \'30 days\' ' +
+        'LIMIT 200'
       );
       let correct = 0, total = 0;
       const events = [];
@@ -43,13 +42,11 @@ class AccuracyEvaluator {
     try {
       const r = await pool.query(
         'SELECT d.decision_id, d.lead_id, d.decision_type, d.priority, d.status, ' +
-        'd.confidence_score, d.created_at, d.executed_at, d.dismissed_at, ' +
-        'l.pipeline_stage ' +
+        'd.confidence_score, d.created_at, d.executed_at, d.dismissed_at, l.pipeline_stage ' +
         'FROM decisions d LEFT JOIN leads l ON d.lead_id=l.lead_id ' +
-        'WHERE d.created_at >= NOW() - INTERVAL $1 ' +
-        'AND d.status IN ($2,$3) ' +
-        'LIMIT 200',
-        ['30 days', 'completed', 'dismissed']
+        'WHERE d.created_at >= NOW() - INTERVAL \'30 days\' ' +
+        'AND d.status IN ($1,$2) LIMIT 200',
+        ['completed', 'dismissed']
       );
       let executed = 0, dismissed = 0, total = r.rowCount;
       for (const row of r.rows) {
@@ -69,27 +66,27 @@ class AccuracyEvaluator {
       const r = await pool.query(
         'SELECT investigation_id, investigation_type, status, confidence, summary, ' +
         'root_cause, finding_count, completed_at, created_at ' +
-        'FROM investigations WHERE status=$1 AND created_at >= NOW() - INTERVAL $2 ' +
-        'LIMIT 100',
-        ['completed', '30 days']
+        'FROM investigations WHERE status=$1 AND created_at >= NOW() - INTERVAL \'30 days\' LIMIT 100',
+        ['completed']
       );
       const avgConfidence = r.rows.reduce((s, x) => s + parseFloat(x.confidence || 0), 0) / (r.rowCount || 1);
-      const withRootCause = r.rows.filter(x => x.root_cause && JSON.parse(JSON.stringify(x.root_cause)).length > 0).length;
+      const withRootCause = r.rows.filter(x => {
+        try { const rc = typeof x.root_cause === 'string' ? JSON.parse(x.root_cause) : (x.root_cause || []); return Array.isArray(rc) && rc.length > 0; } catch(e) { return false; }
+      }).length;
       return { module: 'investigations', total_completed: r.rowCount,
         with_root_cause: withRootCause, root_cause_rate: Math.round((withRootCause / (r.rowCount || 1)) * 10000) / 10000,
         avg_confidence: Math.round(avgConfidence * 100) / 100 };
     } catch (e) { return { module: 'investigations', error: e.message }; }
   }
 
-  // Evaluate conversation intelligence: check if next_step recommendations match decisions
+  // Evaluate conversation intelligence: check sentiment and trust patterns
   static async evaluateConversations() {
     try {
       const r = await pool.query(
         'SELECT ca.lead_id, ca.sentiment, ca.trust_score, ca.conversation_quality, ' +
         'ca.recommended_next_step, ca.confidence_score, ca.analyzed_at ' +
         'FROM conversation_analysis ca ' +
-        'WHERE ca.analyzed_at >= NOW() - INTERVAL $1 LIMIT 200',
-        ['30 days']
+        'WHERE ca.analyzed_at >= NOW() - INTERVAL \'30 days\' LIMIT 200'
       );
       const avgConfidence = r.rows.reduce((s, x) => s + parseFloat(x.confidence_score || 0), 0) / (r.rowCount || 1);
       const avgTrust = r.rows.reduce((s, x) => s + parseFloat(x.trust_score || 0), 0) / (r.rowCount || 1);
@@ -101,13 +98,12 @@ class AccuracyEvaluator {
     } catch (e) { return { module: 'conversations', error: e.message }; }
   }
 
-  // Evaluate sales coaching: check if performance improved after coaching
+  // Evaluate sales coaching effectiveness
   static async evaluateSalesCoaching() {
     try {
       const r = await pool.query(
         'SELECT salesperson_name, onboarding_rate, lead_conversion_rate, activity_score, ' +
-        'productivity_score, performance_trend, updated_at ' +
-        'FROM sales_performance LIMIT 20'
+        'productivity_score, performance_trend, updated_at FROM sales_performance LIMIT 20'
       );
       const improving = r.rows.filter(x => x.performance_trend === 'improving').length;
       const declining = r.rows.filter(x => x.performance_trend === 'declining').length;
@@ -119,7 +115,7 @@ class AccuracyEvaluator {
     } catch (e) { return { module: 'sales_coaching', error: e.message }; }
   }
 
-  // Run all evaluations and return combined results
+  // Run all evaluations
   static async runAll() {
     const [qualification, decisions, investigations, conversations, coaching] = await Promise.allSettled([
       AccuracyEvaluator.evaluateQualification(),
