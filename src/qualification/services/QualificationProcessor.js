@@ -5,13 +5,22 @@ const QualificationHistory = require('../models/QualificationHistory');
 const QualificationEngine = require('./QualificationEngine');
 const ZohoQualificationSync = require('./ZohoQualificationSync');
 const pool = require('../../memory/db/pool');
+const { ContextEngine, InsufficientContextError } = require('../../services/ContextEngine');
 
 /**
  * QualificationProcessor
  * Orchestrates async qualification recalculation.
- * Aggregates data from Business Memory + Conversation Intelligence,
- * runs QualificationEngine, saves results, records history, syncs Zoho.
- * Phase 4 - Onboarding Qualification Engine
+ *
+ * EVIDENCE GATE (NEW):
+ * Before calling QualificationEngine (GPT-4o), ContextEngine.requireContext()
+ * is invoked. If the lead does not meet the minimum evidence threshold, the
+ * job is aborted and a structured "Insufficient Information" record is stored
+ * instead of a hallucinated qualification score.
+ *
+ * Minimum threshold: QUALIFICATION_EVIDENCE_THRESHOLD env var (default 20).
+ * A score of 20 requires at minimum a complete CRM profile (10 pts) + one
+ * analyzed conversation or call (25 pts) -- meaning a brand-new lead with
+ * only a name and email will score 10 points and will NOT be qualified.
  */
 
 const queue = [];
@@ -68,8 +77,47 @@ class QualificationProcessor {
     console.log(`[QualificationProcessor] Processing qualification for lead ${leadId}`);
 
     try {
-      // 1. Aggregate all available data from Business Memory + Conversation Intelligence
-      const leadData = await QualificationProcessor._aggregateLeadData(leadId, zohoLeadId);
+      // ─── EVIDENCE GATE ────────────────────────────────────────────────────────
+      // Evaluate how much evidence exists before running GPT-4o.
+      // If the lead does not meet the minimum threshold, store an
+      // "insufficient_information" record and exit early.
+      let contextResult;
+      try {
+        contextResult = await ContextEngine.requireContext(leadId, zohoLeadId, 'qualification');
+        console.log(`[QualificationProcessor] Evidence gate passed: score=${contextResult.evidence_score} lead=${leadId}`);
+      } catch (ctxErr) {
+        if (ctxErr.code === 'INSUFFICIENT_CONTEXT') {
+          console.warn(`[QualificationProcessor] INSUFFICIENT CONTEXT for lead ${leadId}: score=${ctxErr.evidenceScore}. Missing: ${ctxErr.missingSignals.map(s => s.signal).join(', ')}`);
+          // Store a placeholder qualification record so the dashboard shows
+          // "Insufficient Information" instead of nothing.
+          await QualificationProcessor._storeInsufficientRecord(leadId, zohoLeadId, triggerEvent, ctxErr, Date.now() - startTime);
+          return;
+        }
+        throw ctxErr; // Re-throw unexpected errors
+      }
+
+      // Use context aggregated by ContextEngine rather than re-querying everything
+      const leadData = {
+        ...contextResult.context,
+        lead_id: leadId,
+        zoho_lead_id: zohoLeadId,
+        recalculation_number: (await pool.query('SELECT COUNT(*) as count FROM qualification_history WHERE lead_id = $1', [leadId]).then(r => parseInt(r.rows[0].count || 0)).catch(() => 0)) + 1,
+        profile: contextResult.context.profile,
+        activity: {
+          total_conversations: contextResult.signal_counts.conversations,
+          total_calls:         contextResult.signal_counts.calls,
+          total_emails:        contextResult.signal_counts.emails,
+          total_tasks:         contextResult.signal_counts.tasks,
+          total_notes:         contextResult.signal_counts.notes,
+          total_events:        contextResult.signal_counts.events
+        },
+        latest_analysis:       contextResult.context.latest_conversation,
+        all_analyses_summary:  contextResult.context.all_conversations,
+        calls_summary:         contextResult.context.calls,
+        emails_summary:        contextResult.context.emails,
+        tasks_summary:         contextResult.context.tasks,
+        notes_summary:         contextResult.context.notes
+      };
 
       // 2. Get previous qualification for delta calculation
       const previousQual = await LeadQualification.findByLeadId(leadId);
@@ -137,131 +185,47 @@ class QualificationProcessor {
   }
 
   /**
-   * Aggregate all available lead intelligence from:
-   * - Business Memory (lead_memory, lead_events)
-   * - Conversation Intelligence (conversation_analysis)
+   * Store an "Insufficient Information" placeholder in lead_qualification.
+   * This ensures the dashboard shows a meaningful state instead of nothing.
    */
-  static async _aggregateLeadData(leadId, zohoLeadId) {
-    const results = await Promise.allSettled([
-      pool.query('SELECT * FROM lead_memory WHERE id = $1 LIMIT 1', [leadId]),
-      pool.query('SELECT * FROM lead_events WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 20', [leadId]),
-      pool.query(`SELECT * FROM conversation_analysis WHERE lead_id = $1 AND analysis_status = 'completed' ORDER BY analyzed_at DESC LIMIT 5`, [leadId]),
-      pool.query('SELECT * FROM retell_calls WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 5', [leadId]),
-      pool.query('SELECT * FROM email_events WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 10', [leadId]),
-      pool.query('SELECT * FROM crm_tasks WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 10', [leadId]),
-      pool.query('SELECT * FROM crm_notes WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 10', [leadId]),
-      pool.query('SELECT COUNT(*) as count FROM qualification_history WHERE lead_id = $1', [leadId])
-    ]);
-
-    const get = (i) => results[i].status === 'fulfilled' ? results[i].value.rows : [];
-
-    const leadMemory = get(0)[0] || {};
-    const events = get(1);
-    const analyses = get(2);
-    const calls = get(3);
-    const emails = get(4);
-    const tasks = get(5);
-    const notes = get(6);
-    const historyCount = parseInt((get(7)[0] || {}).count || 0);
-
-    // Build the most recent conversation analysis summary
-    const latestAnalysis = analyses[0] || {};
-
-    return {
-      lead_id: leadId,
-      zoho_lead_id: zohoLeadId,
-      recalculation_number: historyCount + 1,
-
-      // Lead Profile
-      profile: {
-        name: leadMemory.name,
-        email: leadMemory.email,
-        phone: leadMemory.phone,
-        country: leadMemory.country || latestAnalysis.country,
-        source: leadMemory.lead_source,
-        created_at: leadMemory.created_at,
-        last_activity: leadMemory.last_activity_at
-      },
-
-      // Activity Summary
-      activity: {
-        total_events: events.length,
-        total_conversations: analyses.length,
-        total_calls: calls.length,
-        total_emails: emails.length,
-        total_tasks: tasks.length,
-        total_notes: notes.length,
-        event_types: [...new Set(events.map(e => e.event_type))],
-        last_event_at: events[0] ? events[0].created_at : null
-      },
-
-      // Latest Conversation Intelligence
-      latest_analysis: {
-        summary: latestAnalysis.summary,
-        customer_intent: latestAnalysis.customer_intent,
-        conversation_stage: latestAnalysis.conversation_stage,
-        brand_stage: latestAnalysis.brand_stage,
-        sentiment: latestAnalysis.sentiment,
-        trust_score: latestAnalysis.trust_score,
-        buying_intent_score: latestAnalysis.buying_intent_score,
-        budget_detected: latestAnalysis.budget_detected,
-        budget_value: latestAnalysis.budget_value,
-        timeline_detected: latestAnalysis.timeline_detected,
-        timeline_value: latestAnalysis.timeline_value,
-        manufacturing_stage: latestAnalysis.manufacturing_stage,
-        shopify_status: latestAnalysis.shopify_status,
-        experience_level: latestAnalysis.experience_level,
-        brand_readiness: latestAnalysis.brand_readiness,
-        product_interest: latestAnalysis.product_interest,
-        products_requested: latestAnalysis.products_requested,
-        questions: latestAnalysis.questions,
-        objections: latestAnalysis.objections,
-        positive_buying_signals: latestAnalysis.positive_buying_signals,
-        negative_buying_signals: latestAnalysis.negative_buying_signals,
-        topics_detected: latestAnalysis.topics_detected,
-        key_requirements: latestAnalysis.key_requirements,
-        conversation_quality: latestAnalysis.conversation_quality,
-        conversation_outcome: latestAnalysis.conversation_outcome,
-        recommended_next_step: latestAnalysis.recommended_next_step,
-        analyzed_at: latestAnalysis.analyzed_at
-      },
-
-      // All analyses summary
-      all_analyses_summary: analyses.map(a => ({
-        intent: a.customer_intent,
-        sentiment: a.sentiment,
-        trust: a.trust_score,
-        buying_intent: a.buying_intent_score,
-        outcome: a.conversation_outcome,
-        analyzed_at: a.analyzed_at
-      })),
-
-      // Call activity
-      calls_summary: calls.map(c => ({
-        duration: c.duration_seconds,
-        outcome: c.call_outcome,
-        sentiment: c.sentiment,
-        created_at: c.created_at
-      })),
-
-      // Email activity
-      emails_summary: emails.map(e => ({
-        direction: e.direction,
-        subject: e.subject,
-        created_at: e.created_at
-      })),
-
-      // Task and notes
-      tasks_summary: tasks.map(t => ({
-        type: t.task_type,
-        status: t.status,
-        due_date: t.due_date
-      })),
-      notes_summary: notes.map(n => ({
-        content: n.content ? n.content.substring(0, 200) : null,
-        created_at: n.created_at
-      }))
-    };
+  static async _storeInsufficientRecord(leadId, zohoLeadId, triggerEvent, ctxErr, processingTimeMs) {
+    try {
+      await LeadQualification.upsert({
+        lead_id:               leadId,
+        zoho_lead_id:          zohoLeadId || null,
+        category:              'unqualified',
+        onboarding_score:      0,
+        onboarding_probability: 0,
+        readiness_score:       0,
+        trust_score:           0,
+        engagement_score:      0,
+        budget_confidence:     0,
+        timeline_confidence:   0,
+        brand_readiness:       0,
+        manufacturing_readiness: 0,
+        communication_quality: 0,
+        followup_health:       0,
+        decision_confidence:   0,
+        confidence_score:      0,
+        overall_reasoning:     'Insufficient information. Evidence score: ' + ctxErr.evidenceScore + '/20 required. Missing: ' + ctxErr.missingSignals.map(s => s.signal).join('; '),
+        score_breakdown:       {},
+        factors:               {},
+        qualification_gaps:    ctxErr.missingSignals.map(s => ({ gap: s.signal, severity: s.severity, impact_on_score: s.description })),
+        positive_signals:      [],
+        negative_signals:      [],
+        recommended_next_action: ctxErr.missingSignals.length > 0 ? ctxErr.missingSignals[0].how_to_resolve : 'Gather more customer information',
+        recommended_questions: ctxErr.missingSignals.map(s => s.how_to_resolve),
+        urgency_level:         'normal',
+        trigger_event:         triggerEvent,
+        trigger_ref:           null,
+        model_version:         'context_engine_v1',
+        lead_snapshot:         { evidence_score: ctxErr.evidenceScore, missing_signals: ctxErr.missingSignals },
+        insufficient_context:  true
+      });
+      console.log(`[QualificationProcessor] Stored insufficient context record for lead ${leadId}`);
+    } catch (err) {
+      console.error(`[QualificationProcessor] Failed to store insufficient record for ${leadId}:`, err.message);
+    }
   }
 
   /**
