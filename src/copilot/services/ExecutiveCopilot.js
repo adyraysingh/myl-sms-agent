@@ -5,12 +5,14 @@ const IntentDetector = require('./IntentDetector');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Evidence collectors — read from existing modules, never duplicate
+// Evidence collectors — read from Business Memory (lead_memory), never from legacy leads table
 async function collectFromMemory(question) {
   try {
     const leads = await pool.query(
-      'SELECT lead_id, lead_name, lead_email, company_name, lead_source, salesperson_name, pipeline_stage, created_at ' +
-      'FROM leads ORDER BY created_at DESC LIMIT 30'
+      'SELECT id, zoho_lead_id, full_name, email, phone, company, pipeline_stage, ' +
+      'lead_owner_id, lead_owner_name, is_onboarded, call_count, email_count, chat_count, ' +
+      'last_contacted_at, crm_data, created_at ' +
+      'FROM lead_memory ORDER BY created_at DESC LIMIT 30'
     );
     return { source: 'business_memory', leads: leads.rows, count: leads.rowCount };
   } catch (e) { return { source: 'business_memory', error: e.message }; }
@@ -19,15 +21,15 @@ async function collectFromMemory(question) {
 async function collectFromQualification(question) {
   try {
     const hot = await pool.query(
-      'SELECT q.lead_id, q.qualification_category, q.onboarding_score, q.onboarding_probability, ' +
-      'q.trust_score, q.engagement_score, q.readiness_score, q.primary_reason, q.updated_at, ' +
-      'l.lead_name, l.company_name, l.salesperson_name ' +
-      'FROM onboarding_qualifications q JOIN leads l ON q.lead_id=l.lead_id ' +
+      'SELECT q.lead_id, q.category, q.onboarding_score, q.onboarding_probability, ' +
+      'q.trust_score, q.engagement_score, q.readiness_score, q.overall_reasoning, q.last_qualified_at, ' +
+      'lm.full_name, lm.company, lm.lead_owner_name ' +
+      'FROM lead_qualification q JOIN lead_memory lm ON q.lead_id = lm.id ' +
       'ORDER BY q.onboarding_score DESC LIMIT 20'
     );
     const dist = await pool.query(
-      'SELECT qualification_category, COUNT(*) as count, ROUND(AVG(onboarding_score),1) as avg_score ' +
-      'FROM onboarding_qualifications GROUP BY qualification_category'
+      'SELECT category, COUNT(*) as count, ROUND(AVG(onboarding_score),1) as avg_score ' +
+      'FROM lead_qualification GROUP BY category'
     );
     return { source: 'qualification', qualifications: hot.rows, distribution: dist.rows };
   } catch (e) { return { source: 'qualification', error: e.message }; }
@@ -38,8 +40,8 @@ async function collectFromDecisions(question) {
     const pending = await pool.query(
       'SELECT d.decision_id, d.lead_id, d.decision_type, d.priority, d.reason, d.explanation, ' +
       'd.status, d.recommended_execution_time, d.crm_owner, d.confidence_score, d.created_at, ' +
-      'l.lead_name, l.company_name ' +
-      'FROM decisions d LEFT JOIN leads l ON d.lead_id=l.lead_id ' +
+      'lm.full_name, lm.company ' +
+      'FROM ai_decisions d LEFT JOIN lead_memory lm ON d.lead_id = lm.id ' +
       'WHERE d.status IN ($1,$2) ORDER BY ' +
       'CASE d.priority WHEN $3 THEN 1 WHEN $4 THEN 2 WHEN $5 THEN 3 ELSE 4 END, d.created_at DESC LIMIT 20',
       ['pending','acknowledged','critical','high','medium']
@@ -53,7 +55,7 @@ async function collectFromInvestigations(question) {
     const open = await pool.query(
       'SELECT investigation_id, investigation_type, title, question, status, confidence, ' +
       'summary, root_cause, recommendation, business_impact, created_at ' +
-      'FROM investigations WHERE status NOT IN ($1) ORDER BY created_at DESC LIMIT 10',
+      'FROM business_investigations WHERE status NOT IN ($1) ORDER BY created_at DESC LIMIT 10',
       ['archived']
     );
     const patterns = await pool.query(
@@ -71,8 +73,8 @@ async function collectFromInvestigations(question) {
 async function collectFromSalesIntelligence(question) {
   try {
     const perf = await pool.query(
-      'SELECT sp.salesperson_id, sp.salesperson_name, sp.onboarding_rate, sp.lead_conversion_rate, ' +
-      'sp.activity_score, sp.productivity_score, sp.performance_trend, sp.avg_response_time_hours, ' +
+      'SELECT sp.owner_id, sp.owner_name, sp.onboarding_rate, sp.lead_conversion_rate, ' +
+      'sp.activity_score, sp.productivity_score, sp.performance_trend, sp.avg_response_time_minutes, ' +
       'sp.follow_up_completion_rate, sp.avg_trust_score, sp.updated_at ' +
       'FROM sales_performance sp ORDER BY sp.activity_score DESC LIMIT 15'
     );
@@ -83,11 +85,27 @@ async function collectFromSalesIntelligence(question) {
 async function collectFromExecutive(question) {
   try {
     const brief = await pool.query(
-      'SELECT briefing_type, business_summary, business_health, onboarding_performance, ' +
+      'SELECT briefing_type, narrative, business_summary, onboarding_performance, ' +
       'current_risks, current_opportunities, top_priorities, recommended_actions, ' +
-      'confidence_score, created_at FROM executive_briefings ORDER BY created_at DESC LIMIT 1'
+      'overall_health_score, total_leads, hot_leads, warm_leads, created_at ' +
+      'FROM executive_briefings ORDER BY created_at DESC LIMIT 1'
     );
-    return { source: 'executive', latest_briefing: brief.rows[0] || null };
+    // Also get live lead counts from Business Memory
+    const liveStats = await pool.query(
+      'SELECT COUNT(*) as total_leads, ' +
+      'COUNT(*) FILTER (WHERE is_onboarded = true) as onboarded_leads, ' +
+      'COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as new_today ' +
+      'FROM lead_memory'
+    );
+    const qualStats = await pool.query(
+      'SELECT category, COUNT(*) as count FROM lead_qualification GROUP BY category'
+    ).catch(() => ({ rows: [] }));
+    return {
+      source: 'executive',
+      latest_briefing: brief.rows[0] || null,
+      live_lead_stats: liveStats.rows[0] || {},
+      qualification_breakdown: qualStats.rows
+    };
   } catch (e) { return { source: 'executive', error: e.message }; }
 }
 
@@ -97,8 +115,8 @@ async function collectFromConversations(question) {
       'SELECT ca.lead_id, ca.customer_intent, ca.conversation_stage, ca.sentiment, ' +
       'ca.trust_score, ca.objections, ca.positive_buying_signals, ca.negative_buying_signals, ' +
       'ca.recommended_next_step, ca.confidence_score, ca.analyzed_at, ' +
-      'l.lead_name, l.company_name ' +
-      'FROM conversation_analysis ca LEFT JOIN leads l ON ca.lead_id=l.lead_id ' +
+      'lm.full_name, lm.company ' +
+      'FROM conversation_analysis ca LEFT JOIN lead_memory lm ON ca.lead_id = lm.id ' +
       'ORDER BY ca.analyzed_at DESC LIMIT 20'
     );
     return { source: 'conversations', analyses: conv.rows };
@@ -108,13 +126,13 @@ async function collectFromConversations(question) {
 // Route question to correct modules and collect evidence
 async function collectEvidence(question, modules) {
   const collectors = {
-    memory:            () => collectFromMemory(question),
-    qualification:     () => collectFromQualification(question),
-    decisions:         () => collectFromDecisions(question),
-    investigations:    () => collectFromInvestigations(question),
+    memory: () => collectFromMemory(question),
+    qualification: () => collectFromQualification(question),
+    decisions: () => collectFromDecisions(question),
+    investigations: () => collectFromInvestigations(question),
     sales_intelligence: () => collectFromSalesIntelligence(question),
-    executive:         () => collectFromExecutive(question),
-    conversations:     () => collectFromConversations(question)
+    executive: () => collectFromExecutive(question),
+    conversations: () => collectFromConversations(question)
   };
   const tasks = modules.filter(m => collectors[m]).map(m => collectors[m]());
   const results = await Promise.allSettled(tasks);
@@ -147,6 +165,7 @@ class ExecutiveCopilot {
       'Products: Oversized T-Shirts, Hoodies, Tracksuits, Streetwear, Gym Wear, Activewear. ' +
       'Business goal: Convert leads into onboarded manufacturing clients. ' +
       'Key metrics: Onboarding score, trust score, qualification category (Hot/Warm/Cold/Dead), decision execution. ' +
+      'All lead data comes from Business Memory (lead_memory table — authoritative source). ' +
       'Always respond with this JSON structure: ' +
       '{"executive_summary":"...","evidence":[{"fact":"...","source":"...","confidence":0.9}],' +
       '"reasoning":"...","confidence":0.85,"recommended_actions":[{"action":"...","priority":"high","lead_id":null,"decision_id":null,"investigation_id":null}],' +
@@ -161,7 +180,7 @@ class ExecutiveCopilot {
       'CEO QUESTION: ' + question + '\n\n' +
       'DETECTED INTENT: ' + intent + '\n' +
       'USER ROLE: ' + (user_role || 'ceo') + '\n\n' +
-      'EVIDENCE FROM BUSINESS MODULES:\n' + evidenceSummary + '\n\n' +
+      'EVIDENCE FROM BUSINESS MODULES (all lead data from Business Memory):\n' + evidenceSummary + '\n\n' +
       'Answer the question using ONLY the evidence above. Be direct and executive-level. ' +
       'Respond with the required JSON structure.';
 
