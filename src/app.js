@@ -49,6 +49,9 @@ const operationsRoutes = require('./operations/routes/operations.routes');
 // Phase 11: Revenue Intelligence & Forecasting
 const revenueRoutes = require('./revenue/routes/revenue.routes');
 
+// Phase 12: AI Platform Operations
+const platformRoutes = require('./platform/routes/platform.routes');
+
 const app = express();
 
 // Security middleware
@@ -152,6 +155,9 @@ app.use('/api/operations', operationsRoutes);
 
 // Phase 11: Revenue Intelligence & Forecasting
 app.use('/api/revenue', revenueRoutes);
+
+// Phase 12: AI Platform Operations
+app.use('/api/platform', platformRoutes);
 
 // 404 handler
 app.use((req, res) => { res.status(404).json({ error: 'Not found' }); });
