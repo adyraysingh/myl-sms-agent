@@ -8,12 +8,14 @@
  * POST /api/auth/login    — issue access + refresh token
  * POST /api/auth/refresh  — rotate refresh token, issue new pair
  * POST /api/auth/logout   — revoke refresh token session
+ * POST /api/auth/seed     — create first CEO user (only works when zero users exist)
  * POST /api/auth/users    — create user (ceo-only, uses authenticate + authorize inline)
  * GET  /api/auth/me       — return current user info from token
  */
 
 const express     = require('express');
 const AuthService = require('../AuthService');
+const pool        = require('../../memory/db/pool');
 const { authenticate } = require('../../middleware/authenticate');
 const { authorize }    = require('../../middleware/authorize');
 const logger      = require('../../utils/logger');
@@ -85,6 +87,42 @@ router.post('/logout', async (req, res, next) => {
     res.clearCookie('refresh_token');
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (err) {
+    next(err);
+  }
+});
+
+// ─── POST /api/auth/seed — bootstrap first CEO user (zero-users-only) ────────
+// This endpoint is only active when the platform_users table is empty.
+// It creates the first CEO account. After that, it returns 409 on all calls.
+// Requires SEED_ALLOWED=true environment variable as an additional safety guard.
+router.post('/seed', async (req, res, next) => {
+  try {
+    // Safety guard: seed must be explicitly enabled
+    if (process.env.SEED_ALLOWED !== 'true') {
+      return res.status(403).json({ error: 'Seeding is not enabled. Set SEED_ALLOWED=true to bootstrap the first user.' });
+    }
+
+    // Check zero users
+    const count = await pool.query('SELECT COUNT(*) as cnt FROM platform_users');
+    if (parseInt(count.rows[0].cnt) > 0) {
+      return res.status(409).json({ error: 'Users already exist. Seed endpoint is disabled.' });
+    }
+
+    const { email, password, full_name } = req.body;
+    if (!email || !password || !full_name) {
+      return res.status(400).json({ error: 'email, password, and full_name are required' });
+    }
+
+    const user = await AuthService.createUser(email, password, full_name, 'ceo');
+    logger.info('[AuthService] First CEO user seeded', { email });
+
+    res.status(201).json({
+      success: true,
+      message: 'First CEO user created. Please disable SEED_ALLOWED after this call.',
+      user
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
