@@ -16,26 +16,29 @@ class ZohoIngestor {
     const ownerId = payload.Owner?.id || payload.ownerId;
     const ownerName = payload.Owner?.name || payload.ownerName;
 
-    // Upsert lead memory
-    let memory = await LeadMemory.findByZohoLeadId(zohoLeadId);
+    // Upsert lead memory - use correct method name findByZohoId
+    let memory = await LeadMemory.findByZohoId(zohoLeadId);
     if (!memory) {
       memory = await LeadMemory.create({
-        zohoLeadId,
+        zoho_lead_id: zohoLeadId,
         email: email || null,
-        name: name || null,
+        full_name: name || null,
         phone: phone || null,
-        ownerId: ownerId || null,
-        ownerName: ownerName || null,
-        rawPayload: payload
+        lead_owner_id: ownerId || null,
+        lead_owner_name: ownerName || null,
+        crm_data: payload
       });
     } else {
-      memory = await LeadMemory.update(memory.id, {
+      // Update fields via syncFromCRM
+      const updated = await LeadMemory.syncFromCRM(zohoLeadId, {
         email: email || memory.email,
-        name: name || memory.name,
+        full_name: name || memory.full_name,
         phone: phone || memory.phone,
-        ownerId: ownerId || memory.owner_id,
-        ownerName: ownerName || memory.owner_name
+        lead_owner_id: ownerId || memory.lead_owner_id,
+        lead_owner_name: ownerName || memory.lead_owner_name,
+        crm_data: payload
       });
+      if (updated) memory = updated;
     }
 
     // Record the event
