@@ -7,26 +7,35 @@
  * after completing its own work. The orchestrator then automatically triggers
  * the correct downstream modules — no manual API calls required.
  *
+ * CONTEXT-AWARE PROCESSING (updated):
+ * Qualification and Decision generation are now gated behind the ContextEngine.
+ * On `lead.created`, the system does NOT immediately qualify or generate decisions.
+ * Instead, ContextEngine evaluates available evidence. If below the threshold,
+ * the lead is logged as "awaiting evidence" and the Slack message indicates what
+ * information is still needed. Once a conversation, call, chat, or email arrives
+ * (any event with real interaction data), the qualification + decision pipeline runs.
+ *
  * EVENTS:
- *   lead.created         -> qualify, decision, revenue, intelligence, learning, Slack
- *   conversation.analyzed -> qualify, decision, intelligence, learning
- *   call.completed       -> analyze conversation, qualify, decision, learning, Slack
- *   chat.completed       -> analyze conversation, qualify, decision, learning, Slack
- *   email.replied        -> qualify, decision, learning
- *   qualification.updated -> decision, revenue, intelligence, learning, Slack (if hot)
- *   decision.generated   -> workflow (operations), learning, Slack
- *   task.completed       -> qualify, learning
- *   onboarding.completed -> revenue, learning, intelligence, Slack
+ *   lead.created           -> context check, revenue, intelligence, Slack (awaiting evidence)
+ *   conversation.analyzed  -> qualify, decision, intelligence, learning, Slack
+ *   call.completed         -> analyze conversation -> chains to conversation.analyzed
+ *   chat.completed         -> analyze conversation -> chains to conversation.analyzed
+ *   email.replied          -> qualify (context-gated), decision (context-gated), learning
+ *   qualification.updated  -> decision (context-gated), revenue, intelligence, Slack (hot)
+ *   decision.generated     -> workflow (operations), learning, Slack
+ *   task.completed         -> qualify (context-gated), learning
+ *   onboarding.completed   -> revenue, learning, intelligence, Slack
  */
 
 const QualificationProcessor = require('../qualification/services/QualificationProcessor');
-const DecisionProcessor       = require('../decisions/services/DecisionProcessor');
-const ConversationProcessor   = require('../intelligence/services/ConversationProcessor');
-const IntelligenceProcessor   = require('../intelligence/services/IntelligenceProcessor');
-const WorkflowEngine          = require('../operations/services/WorkflowEngine');
-const RevenueForecaster       = require('../revenue/services/RevenueForecaster');
-const LearningEngine          = require('../learning/services/LearningEngine');
-const SlackNotifier           = require('./SlackNotifier');
+const DecisionProcessor = require('../decisions/services/DecisionProcessor');
+const ConversationProcessor = require('../intelligence/services/ConversationProcessor');
+const IntelligenceProcessor = require('../intelligence/services/IntelligenceProcessor');
+const WorkflowEngine = require('../operations/services/WorkflowEngine');
+const RevenueForecaster = require('../revenue/services/RevenueForecaster');
+const LearningEngine = require('../learning/services/LearningEngine');
+const SlackNotifier = require('./SlackNotifier');
+const { ContextEngine } = require('./ContextEngine');
 
 // Debounce map: prevent the same lead from flooding the same pipeline
 const _debounce = new Map();
@@ -82,30 +91,85 @@ class EventOrchestrator {
     }
   }
 
+  /**
+   * lead.created
+   *
+   * A brand-new lead has zero interaction history. We do NOT immediately
+   * qualify or generate decisions — there is no evidence for the AI to work
+   * with. Instead:
+   *  1. Evaluate context to understand what is missing.
+   *  2. Post a Slack message indicating the lead arrived and what signals
+   *     are still needed before the AI can process it.
+   *  3. Schedule revenue refresh and intelligence refresh.
+   *
+   * Qualification + Decisions will fire automatically when the first
+   * conversation.analyzed, call.completed, or chat.completed event arrives.
+   */
   static async _onLeadCreated(lead_id, zoho_lead_id, payload) {
     try {
-      if (!_dedupe('qualify:' + lead_id, 5000)) {
-        await QualificationProcessor.submit({ leadId: lead_id, zohoLeadId: zoho_lead_id || null, triggerEvent: 'lead_created', triggerRef: null });
+      // Evaluate context — this gives us the evidence score and missing signals
+      const ctx = await ContextEngine.evaluate(lead_id, zoho_lead_id).catch(e => {
+        console.error('[EO] ContextEngine.evaluate error:', e.message);
+        return null;
+      });
+
+      console.log(`[EO] lead.created: evidence_score=${ctx ? ctx.evidence_score : 'n/a'} lead=${lead_id}`);
+
+      if (ctx && ctx.ready_for_qualification) {
+        // Edge case: lead was created with pre-existing context (e.g., re-import)
+        console.log(`[EO] lead.created: context already sufficient (score=${ctx.evidence_score}), proceeding with qualification`);
+        if (!_dedupe('qualify:' + lead_id, 5000)) {
+          await QualificationProcessor.submit({ leadId: lead_id, zohoLeadId: zoho_lead_id || null, triggerEvent: 'lead_created', triggerRef: null });
+        }
+        if (!_dedupe('decision:' + lead_id + ':created', 5000)) {
+          await DecisionProcessor.queueDecisionGeneration(lead_id, 'lead_created', 'zoho_crm', payload);
+        }
+      } else {
+        // Normal case: new lead, no interactions yet
+        const missingList = ctx
+          ? ctx.missing_signals.filter(s => s.severity === 'critical' || s.severity === 'high').map(s => s.signal)
+          : ['No context data available'];
+        console.log(`[EO] lead.created: insufficient evidence (score=${ctx ? ctx.evidence_score : 0}). Waiting for: ${missingList.join(', ')}`);
       }
-      if (!_dedupe('decision:' + lead_id + ':created', 5000)) {
-        await DecisionProcessor.queueDecisionGeneration(lead_id, 'lead_created', 'zoho_crm', payload);
-      }
+
+      // Always: schedule revenue refresh and intelligence update
       EventOrchestrator._scheduleRevenueRefresh();
       IntelligenceProcessor.triggerRefresh('lead_created', { lead_id }).catch(e => console.error('[EO] Intel error:', e.message));
-      // Notify Slack
+
+      // Always: notify Slack with evidence-aware message
+      const missingSignalsSummary = ctx && ctx.missing_signals.length > 0
+        ? ctx.missing_signals.filter(s => s.severity === 'critical' || s.severity === 'high').map(s => s.signal).join(', ')
+        : null;
+
       SlackNotifier.notifyLeadCreated({
-        lead_name: payload.lead_name || payload.name || lead_id,
-        crm_owner: payload.crm_owner || payload.owner,
-        zoho_lead_id: zoho_lead_id || payload.zoho_lead_id,
-        lead_id
+        lead_name:        payload.lead_name || payload.name || lead_id,
+        crm_owner:        payload.crm_owner || payload.owner,
+        zoho_lead_id:     zoho_lead_id || payload.zoho_lead_id,
+        lead_id,
+        evidence_score:   ctx ? ctx.evidence_score : 0,
+        awaiting_signals: missingSignalsSummary,
+        ready_for_ai:     ctx ? ctx.ready_for_qualification : false
       }).catch(e => console.error('[EO] Slack error:', e.message));
+
     } catch (e) { console.error('[EO] _onLeadCreated:', e.message); }
   }
 
+  /**
+   * conversation.analyzed
+   *
+   * A real conversation has been processed. This is the primary trigger
+   * for qualification and decision generation. ContextEngine will now
+   * have enough evidence to clear the threshold (conversation score = 25 pts).
+   */
   static async _onConversationAnalyzed(lead_id, zoho_lead_id, payload) {
     try {
       if (!_dedupe('qualify:' + lead_id, 3000)) {
-        await QualificationProcessor.submit({ leadId: lead_id, zohoLeadId: zoho_lead_id || null, triggerEvent: 'conversation_analyzed', triggerRef: payload.analysis_id || null });
+        await QualificationProcessor.submit({
+          leadId: lead_id,
+          zohoLeadId: zoho_lead_id || null,
+          triggerEvent: 'conversation_analyzed',
+          triggerRef: payload.analysis_id || null
+        });
       }
       if (!_dedupe('decision:' + lead_id + ':conv', 3000)) {
         await DecisionProcessor.queueDecisionGeneration(lead_id, 'conversation_analyzed', 'conversation_intelligence', payload);
@@ -164,8 +228,14 @@ class EventOrchestrator {
 
   static async _onEmailReplied(lead_id, zoho_lead_id, payload) {
     try {
+      // Email reply is real interaction — context threshold may now be met
       if (!_dedupe('qualify:' + lead_id, 3000)) {
-        await QualificationProcessor.submit({ leadId: lead_id, zohoLeadId: zoho_lead_id || null, triggerEvent: 'email_replied', triggerRef: payload.message_id || null });
+        await QualificationProcessor.submit({
+          leadId: lead_id,
+          zohoLeadId: zoho_lead_id || null,
+          triggerEvent: 'email_replied',
+          triggerRef: payload.message_id || null
+        });
       }
       if (!_dedupe('decision:' + lead_id + ':email', 3000)) {
         await DecisionProcessor.queueDecisionGeneration(lead_id, 'email_replied', 'email', payload);
@@ -186,11 +256,11 @@ class EventOrchestrator {
       // Notify Slack for hot leads
       if (payload.category === 'hot' || payload.category_changed) {
         SlackNotifier.notifyLeadQualified({
-          lead_name: payload.lead_name || lead_id,
-          category: payload.category,
-          qualification_score: payload.qualification_score,
-          crm_owner: payload.crm_owner || payload.owner,
-          zoho_lead_id: zoho_lead_id || payload.zoho_lead_id,
+          lead_name:          payload.lead_name || lead_id,
+          category:           payload.category,
+          qualification_score:payload.qualification_score,
+          crm_owner:          payload.crm_owner || payload.owner,
+          zoho_lead_id:       zoho_lead_id || payload.zoho_lead_id,
           lead_id
         }).catch(e => console.error('[EO] Slack error:', e.message));
       }
@@ -207,13 +277,13 @@ class EventOrchestrator {
           // Notify Slack for critical/high decisions
           if (decision.priority === 'critical' || decision.priority === 'high') {
             SlackNotifier.notifyDecisionGenerated({
-              lead_name: payload.lead_name || lead_id,
-              priority: decision.priority,
-              confidence_score: decision.confidence_score,
-              crm_owner: decision.crm_owner || payload.crm_owner,
-              zoho_lead_id: payload.zoho_lead_id,
+              lead_name:          payload.lead_name || lead_id,
+              priority:           decision.priority,
+              confidence_score:   decision.confidence_score,
+              crm_owner:          decision.crm_owner || payload.crm_owner,
+              zoho_lead_id:       payload.zoho_lead_id,
               recommended_action: decision.recommended_action || decision.decision_type,
-              reason: decision.reason,
+              reason:             decision.reason,
               lead_id
             }).catch(e => console.error('[EO] Slack error:', e.message));
           }
@@ -226,7 +296,12 @@ class EventOrchestrator {
   static async _onTaskCompleted(lead_id, zoho_lead_id, payload) {
     try {
       if (!_dedupe('qualify:' + lead_id, 5000)) {
-        await QualificationProcessor.submit({ leadId: lead_id, zohoLeadId: zoho_lead_id || null, triggerEvent: 'task_completed', triggerRef: payload.decision_id || null });
+        await QualificationProcessor.submit({
+          leadId: lead_id,
+          zohoLeadId: zoho_lead_id || null,
+          triggerEvent: 'task_completed',
+          triggerRef: payload.decision_id || null
+        });
       }
       EventOrchestrator._maybeTriggerLearning();
     } catch (e) { console.error('[EO] _onTaskCompleted:', e.message); }
