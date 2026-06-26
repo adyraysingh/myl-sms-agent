@@ -46,6 +46,9 @@ const learningRoutes = require('./learning/routes/learning.routes');
 // Phase 10: Autonomous Revenue Operations
 const operationsRoutes = require('./operations/routes/operations.routes');
 
+// Phase 11: Revenue Intelligence & Forecasting
+const revenueRoutes = require('./revenue/routes/revenue.routes');
+
 const app = express();
 
 // Security middleware
@@ -146,6 +149,9 @@ app.use('/api/learning', learningRoutes);
 
 // Phase 10: Autonomous Revenue Operations
 app.use('/api/operations', operationsRoutes);
+
+// Phase 11: Revenue Intelligence & Forecasting
+app.use('/api/revenue', revenueRoutes);
 
 // 404 handler
 app.use((req, res) => { res.status(404).json({ error: 'Not found' }); });
