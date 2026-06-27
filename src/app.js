@@ -46,6 +46,9 @@ const WorkerRegistry = require('./queue/WorkerRegistry');
 const JobQueue = require('./queue/JobQueue');
 const chaosTestRoutes = require('./queue/chaos-test.routes');
 
+// Phase 3: Learning Engine
+const LearningScheduler = require('./learning/services/LearningScheduler');
+
 const app = express();
 
 app.use(helmet());
@@ -109,6 +112,20 @@ console.log('[WorkerRegistry] Phase 2 durable workers started');
 } catch (err) {
 logger.error('[app] Queue initialization failed:', err.message);
 logger.warn('[app] Running without durable queues - jobs will use in-memory fallback');
+}
+})();
+
+// Phase 3: Run learning migration and start scheduler
+(async () => {
+try {
+const learningMigration3 = path.join(__dirname, 'learning', 'db', 'migrations', '013_phase3_learning.sql');
+const learningSql3 = fs.readFileSync(learningMigration3, 'utf8');
+await pool.query(learningSql3);
+console.log('[LearningScheduler] Phase 3 learning migration: SUCCESS');
+LearningScheduler.start();
+console.log('[LearningScheduler] Phase 3 learning scheduler started');
+} catch (err) {
+logger.error('[app] Phase 3 learning initialization failed:', err.message);
 }
 })();
 
