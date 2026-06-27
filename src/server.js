@@ -29,8 +29,12 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 
 // Load full app AFTER server is listening
 let fullAppLoaded = false;
+let WorkerRegistry = null;
 try {
-  const fullApp = require('./app');
+  const fullAppModule = require('./app');
+  // app.js exports { app, WorkerRegistry }
+  const fullApp = fullAppModule.app || fullAppModule;
+  WorkerRegistry = fullAppModule.WorkerRegistry || null;
   app.use(fullApp);
   fullAppLoaded = true;
   logger.info('Full app loaded successfully');
@@ -72,10 +76,32 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
+// Phase 2: Graceful shutdown - stop workers before closing server
+process.on('SIGTERM', async () => {
+  logger.info('SIGTERM received - starting graceful shutdown');
+  // Stop accepting new HTTP requests
   server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
+    logger.info('HTTP server closed');
   });
+  // Stop queue workers and wait for in-flight jobs
+  if (WorkerRegistry && WorkerRegistry.isStarted()) {
+    logger.info('Stopping queue workers...');
+    try {
+      await WorkerRegistry.stop();
+      logger.info('Queue workers stopped cleanly');
+    } catch (err) {
+      logger.error('Error stopping workers: ' + err.message);
+    }
+  }
+  logger.info('Graceful shutdown complete');
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  logger.info('SIGINT received - starting graceful shutdown');
+  server.close(() => {});
+  if (WorkerRegistry && WorkerRegistry.isStarted()) {
+    await WorkerRegistry.stop().catch(() => {});
+  }
+  process.exit(0);
 });
