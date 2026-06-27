@@ -11,16 +11,27 @@
  * POST /api/auth/seed     — create first CEO user (only works when zero users exist)
  * POST /api/auth/users    — create user (ceo-only, uses authenticate + authorize inline)
  * GET  /api/auth/me       — return current user info from token
+ *
+ * Cookie: SameSite=None;Secure required for cross-origin cookie delivery
+ * (frontend on vercel.app, backend on railway.app — different origins)
  */
 
-const express     = require('express');
+const express    = require('express');
 const AuthService = require('../AuthService');
-const pool        = require('../../memory/db/pool');
+const pool       = require('../../memory/db/pool');
 const { authenticate } = require('../../middleware/authenticate');
 const { authorize }    = require('../../middleware/authorize');
-const logger      = require('../../utils/logger');
+const logger     = require('../../utils/logger');
 
 const router = express.Router();
+
+// Cookie options — SameSite=None required for cross-origin (vercel.app → railway.app)
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: true, // Always true — SameSite=None requires Secure
+  sameSite: 'none', // Cross-origin cookie support
+  maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days in ms
+};
 
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post('/login', async (req, res, next) => {
@@ -31,20 +42,15 @@ router.post('/login', async (req, res, next) => {
 
     const result = await AuthService.login(email, password, ip, userAgent);
 
-    // Set refresh token as HttpOnly Secure cookie
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure:   process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge:   30 * 24 * 60 * 60 * 1000 // 30 days in ms
-    });
+    // Set refresh token as HttpOnly Secure SameSite=None cookie (cross-origin)
+    res.cookie('refresh_token', result.refreshToken, COOKIE_OPTIONS);
 
     res.json({
-      success: true,
+      success:      true,
       access_token: result.accessToken,
-      token_type: 'Bearer',
-      expires_in: 900, // 15 minutes in seconds
-      user: result.user
+      token_type:   'Bearer',
+      expires_in:   900, // 15 minutes in seconds
+      user:         result.user
     });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -59,19 +65,14 @@ router.post('/refresh', async (req, res, next) => {
     const refreshToken = req.cookies?.refresh_token || req.body?.refresh_token;
     const result = await AuthService.refresh(refreshToken);
 
-    // Rotate cookie
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure:   process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge:   30 * 24 * 60 * 60 * 1000
-    });
+    // Rotate cookie — same SameSite=None options
+    res.cookie('refresh_token', result.refreshToken, COOKIE_OPTIONS);
 
     res.json({
-      success: true,
+      success:      true,
       access_token: result.accessToken,
-      token_type: 'Bearer',
-      expires_in: 900
+      token_type:   'Bearer',
+      expires_in:   900
     });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -84,7 +85,11 @@ router.post('/logout', async (req, res, next) => {
   try {
     const refreshToken = req.cookies?.refresh_token || req.body?.refresh_token;
     await AuthService.logout(refreshToken);
-    res.clearCookie('refresh_token');
+    res.clearCookie('refresh_token', {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none'
+    });
     res.json({ success: true, message: 'Logged out successfully' });
   } catch (err) {
     next(err);
