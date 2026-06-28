@@ -8,7 +8,7 @@ class SalesPerformanceEngine {
         const date = period_date || new Date().toISOString().split('T')[0];
         console.log('[SalesPerformanceEngine] Recalculating all owners for', date);
 
-      try {
+      try 
               const owners = await SalesPerformanceEngine._getActiveOwners(date);
               const results = [];
 
@@ -161,19 +161,18 @@ class SalesPerformanceEngine {
   static async _getActiveOwners(date) {
         const result = await pool.query(
                 `SELECT DISTINCT
-                        COALESCE(lm.owner_id, ca.owner_id) as owner_id,
-                                COALESCE(lm.owner_name, '') as owner_name,
-                                        COALESCE(lm.owner_email, '') as owner_email
-                                               FROM lead_memory lm
-                                                      LEFT JOIN conversation_analysis ca ON ca.lead_id = lm.id
-                                                             WHERE lm.owner_id IS NOT NULL AND lm.owner_id != ''
-                                                                    GROUP BY lm.owner_id, lm.owner_name, lm.owner_email, ca.owner_id
-                                                                           LIMIT 50`
-              );
+                        lm.lead_owner_id as owner_id,
+                        COALESCE(lm.lead_owner_name, '') as owner_name,
+                        '' as owner_email
+                        FROM lead_memory lm
+                        WHERE lm.lead_owner_id IS NOT NULL AND lm.lead_owner_id != ''
+                        GROUP BY lm.lead_owner_id, lm.lead_owner_name
+                        LIMIT 50`
+        );
         return result.rows;
-  }
+}
 
-  static async _getCallMetrics(owner_id, start, end) {
+static async _getCallMetricsstatic async _getCallMetrics(owner_id, start, end) {
         const result = await pool.query(
                 `SELECT
                         COUNT(*) as count,
@@ -181,7 +180,7 @@ class SalesPerformanceEngine {
                                         AVG(EXTRACT(EPOCH FROM (rc.call_started_at - lm.created_at))/60) as avg_response_time_minutes
                                                FROM retell_calls rc
                                                       JOIN lead_memory lm ON lm.id = rc.lead_id
-                                                             WHERE lm.owner_id = $1
+                                                             WHERE lm.lead_owner_id = $1
                                                                     AND rc.created_at BETWEEN $2 AND $3`,
                 [owner_id, start, end]
               );
@@ -198,7 +197,7 @@ class SalesPerformanceEngine {
                 `SELECT COUNT(*) as count
                        FROM salesiq_chats sc
                               JOIN lead_memory lm ON lm.id = sc.lead_id
-                                     WHERE lm.owner_id = $1 AND sc.created_at BETWEEN $2 AND $3`,
+                                     WHERE lm.lead_owner_id = $1 AND sc.created_at BETWEEN $2 AND $3`,
                 [owner_id, start, end]
               );
         return { count: parseInt(result.rows[0].count) || 0 };
@@ -263,7 +262,7 @@ class SalesPerformanceEngine {
                                                         COUNT(*) FILTER (WHERE qualification_category = 'Dead' OR qualification_category = 'Cold') as lost
                                                                FROM lead_memory lm
                                                                       LEFT JOIN lead_qualification lq ON lq.lead_id = lm.id
-                                                                             WHERE lm.owner_id = $1`,
+                                                                             WHERE lm.lead_owner_id = $1`,
                 [owner_id]
               );
         const row = result.rows[0];
@@ -290,7 +289,7 @@ class SalesPerformanceEngine {
                                                                   ELSE 20 END) as avg_sentiment
                                                                          FROM conversation_analysis ca
                                                                                 JOIN lead_memory lm ON lm.id = ca.lead_id
-                                                                                       WHERE lm.owner_id = $1 AND ca.analyzed_at BETWEEN $2 AND $3`,
+                                                                                       WHERE lm.lead_owner_id = $1 AND ca.analyzed_at BETWEEN $2 AND $3`,
                 [owner_id, start, end]
               );
         const row = result.rows[0];
