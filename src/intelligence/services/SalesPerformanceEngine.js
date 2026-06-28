@@ -8,7 +8,7 @@ class SalesPerformanceEngine {
         const date = period_date || new Date().toISOString().split('T')[0];
         console.log('[SalesPerformanceEngine] Recalculating all owners for', date);
 
-      try 
+      try {
               const owners = await SalesPerformanceEngine._getActiveOwners(date);
               const results = [];
 
@@ -172,7 +172,7 @@ class SalesPerformanceEngine {
         return result.rows;
 }
 
-static async _getCallMetricsstatic async _getCallMetrics(owner_id, start, end) {
+static async _getCallMetrics(owner_id, start, end) {
         const result = await pool.query(
                 `SELECT
                         COUNT(*) as count,
