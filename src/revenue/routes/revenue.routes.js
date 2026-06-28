@@ -3,13 +3,11 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { Pool } = require('pg');
+const pool = require('../../memory/db/pool');
 
 const ForecastModel = require('../models/ForecastModel');
 const RevenueForecaster = require('../services/RevenueForecaster');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
-
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 // ─── Migration Endpoint ───────────────────────────────────────────────────────
 
@@ -163,7 +161,6 @@ res.status(500).json({ success: false, error: err.message });
 });
 
 // ─── POST /api/revenue/evaluate ──────────────────────────────────────────────
-// Evaluate a past forecast against actual results — Revenue Received outcome
 
 router.post('/evaluate', async (req, res) => {
 try {
@@ -177,7 +174,6 @@ actual_revenue: parseFloat(actual_revenue || 0),
 actual_onboardings: parseInt(actual_onboardings || 0),
 notes: notes || ''
 });
-// Phase 3.2: Auto-link revenue forecast prediction outcome (fire-and-forget)
 setImmediate(() => PredictionPublisher.linkOutcome({
 module: 'revenue_forecaster',
 lead_id: null,
