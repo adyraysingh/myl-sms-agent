@@ -49,6 +49,9 @@ const chaosTestRoutes = require('./queue/chaos-test.routes');
 // Phase 3: Learning Engine
 const LearningScheduler = require('./learning/services/LearningScheduler');
 
+// Phase 3.3: Simulation Engine
+const simulationRoutes = require('./simulation/simulation.routes');
+
 const app = express();
 
 app.use(helmet());
@@ -176,6 +179,9 @@ app.use('/api/learning', learningRoutes);
 app.use('/api/operations', operationsRoutes);
 app.use('/api/revenue', revenueRoutes);
 app.use('/api/platform', platformRoutes);
+
+// Phase 3.3: Simulation routes
+app.use('/api/simulation', simulationRoutes);
 
 // Phase 2: Queue management API
 app.get('/api/queue/stats', authenticate, async (req, res) => {
