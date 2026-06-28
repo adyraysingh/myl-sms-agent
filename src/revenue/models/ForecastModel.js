@@ -138,13 +138,13 @@ class ForecastModel {
 
   static async upsertScenario(data) {
         var res = await pool.query(
-                'SELECT id FROM forecast_scenarios WHERE forecast_id=$1 AND scenario_type=$2 LIMIT 1',
+                'SELECT scenario_id FROM forecast_scenarios WHERE forecast_id=$1 AND scenario_type=$2 LIMIT 1',
                 [data.forecast_id, data.scenario_type]
               );
         if (res.rows[0]) {
-                var sid = res.rows[0].id;
+                var sid = res.rows[0].scenario_id;
                 var upd = await pool.query(
-                          'UPDATE forecast_scenarios SET expected_revenue=$1, expected_onboardings=$2, assumptions=$3, confidence=$4, primary_risks=$5, primary_opportunities=$6, explanation=$7 WHERE id=$8 RETURNING *',
+                          'UPDATE forecast_scenarios SET expected_revenue=$1, expected_onboardings=$2, assumptions=$3, confidence=$4, primary_risks=$5, primary_opportunities=$6, explanation=$7 WHERE scenario_id=$8 RETURNING *',
                           [data.expected_revenue || 0, data.expected_onboardings || 0,
                                     JSON.stringify(data.assumptions || []), data.confidence || 0,
                                     JSON.stringify(data.primary_risks || []), JSON.stringify(data.primary_opportunities || []),
