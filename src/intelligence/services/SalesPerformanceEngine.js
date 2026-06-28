@@ -1,4 +1,4 @@
-'use strict';
+—————'use strict';
 const pool = require('../../memory/db/pool');
 const SalesPerformance = require('../models/SalesPerformance');
 
