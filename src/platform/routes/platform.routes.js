@@ -3,446 +3,444 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
-const { Pool } = require('pg');
+const pool = require('../../memory/db/pool');
 
 const PlatformModel = require('../models/PlatformModel');
 const PlatformMonitor = require('../services/PlatformMonitor');
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
-
 // ── Migration ─────────────────────────────────────────────────────────────────
 
 router.post('/migrate', async function(req, res) {
-  try {
-    var migPath = path.join(__dirname, '../db/migrations/011_platform_operations.sql');
-    var sql = fs.readFileSync(migPath, 'utf8');
-    await pool.query(sql);
-    res.json({ success: true, message: 'Phase 12 Platform Operations migration complete', timestamp: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] Migration error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var migPath = path.join(__dirname, '../db/migrations/011_platform_operations.sql');
+var sql = fs.readFileSync(migPath, 'utf8');
+await pool.query(sql);
+res.json({ success: true, message: 'Phase 12 Platform Operations migration complete', timestamp: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] Migration error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/health ──────────────────────────────────────────────────
 
 router.get('/health', async function(req, res) {
-  try {
-    var result = await PlatformMonitor.runFullHealthCheck();
-    var alerts = await PlatformMonitor.generateSystemAlerts();
-    res.json({ success: true, health: result, alerts: alerts, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /health error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var result = await PlatformMonitor.runFullHealthCheck();
+var alerts = await PlatformMonitor.generateSystemAlerts();
+res.json({ success: true, health: result, alerts: alerts, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /health error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/modules ─────────────────────────────────────────────────
 
 router.get('/modules', async function(req, res) {
-  try {
-    var latest = await PlatformModel.getModuleHealthLatest();
-    var summary = {
-      total: latest.length,
-      healthy: latest.filter(function(m) { return m.status === 'healthy'; }).length,
-      degraded: latest.filter(function(m) { return m.status === 'degraded'; }).length,
-      unhealthy: latest.filter(function(m) { return m.status === 'unhealthy'; }).length
-    };
-    res.json({ success: true, modules: latest, summary: summary, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /modules error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var latest = await PlatformModel.getModuleHealthLatest();
+var summary = {
+total: latest.length,
+healthy: latest.filter(function(m) { return m.status === 'healthy'; }).length,
+degraded: latest.filter(function(m) { return m.status === 'degraded'; }).length,
+unhealthy: latest.filter(function(m) { return m.status === 'unhealthy'; }).length
+};
+res.json({ success: true, modules: latest, summary: summary, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /modules error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/queues ──────────────────────────────────────────────────
 
 router.get('/queues', async function(req, res) {
-  try {
-    var queues = await PlatformModel.getAllQueues();
-    var summary = {
-      total: queues.length,
-      running: queues.filter(function(q) { return q.status === 'running'; }).length,
-      paused: queues.filter(function(q) { return q.status === 'paused'; }).length,
-      total_pending: queues.reduce(function(s, q) { return s + (parseInt(q.pending_jobs) || 0); }, 0),
-      total_failed: queues.reduce(function(s, q) { return s + (parseInt(q.failed_jobs) || 0); }, 0)
-    };
-    res.json({ success: true, queues: queues, summary: summary, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /queues error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var queues = await PlatformModel.getAllQueues();
+var summary = {
+total: queues.length,
+running: queues.filter(function(q) { return q.status === 'running'; }).length,
+paused: queues.filter(function(q) { return q.status === 'paused'; }).length,
+total_pending: queues.reduce(function(s, q) { return s + (parseInt(q.pending_jobs) || 0); }, 0),
+total_failed: queues.reduce(function(s, q) { return s + (parseInt(q.failed_jobs) || 0); }, 0)
+};
+res.json({ success: true, queues: queues, summary: summary, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /queues error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/integrations ───────────────────────────────────────────
 
 router.get('/integrations', async function(req, res) {
-  try {
-    var integrations = await PlatformModel.getAllIntegrations();
-    var summary = {
-      total: integrations.length,
-      healthy: integrations.filter(function(i) { return i.status === 'healthy'; }).length,
-      degraded: integrations.filter(function(i) { return i.status === 'degraded'; }).length,
-      unhealthy: integrations.filter(function(i) { return i.status === 'unhealthy'; }).length
-    };
-    res.json({ success: true, integrations: integrations, summary: summary, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /integrations error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var integrations = await PlatformModel.getAllIntegrations();
+var summary = {
+total: integrations.length,
+healthy: integrations.filter(function(i) { return i.status === 'healthy'; }).length,
+degraded: integrations.filter(function(i) { return i.status === 'degraded'; }).length,
+unhealthy: integrations.filter(function(i) { return i.status === 'unhealthy'; }).length
+};
+res.json({ success: true, integrations: integrations, summary: summary, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /integrations error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/models ──────────────────────────────────────────────────
 
 router.get('/models', async function(req, res) {
-  try {
-    var models = await PlatformModel.getAllModels();
-    res.json({ success: true, models: models, count: models.length, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /models error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var models = await PlatformModel.getAllModels();
+res.json({ success: true, models: models, count: models.length, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /models error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/prompts ─────────────────────────────────────────────────
 
 router.get('/prompts', async function(req, res) {
-  try {
-    var prompts = await PlatformModel.getAllPrompts();
-    var active = prompts.filter(function(p) { return p.status === 'active'; });
-    res.json({ success: true, prompts: prompts, active_count: active.length, total_count: prompts.length, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /prompts error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var prompts = await PlatformModel.getAllPrompts();
+var active = prompts.filter(function(p) { return p.status === 'active'; });
+res.json({ success: true, prompts: prompts, active_count: active.length, total_count: prompts.length, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /prompts error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/costs ───────────────────────────────────────────────────
 
 router.get('/costs', async function(req, res) {
-  try {
-    var summary = await PlatformModel.getCostSummary();
-    var byModule = await PlatformModel.getCostByModule();
-    var trend = await PlatformModel.getCostTrend(30);
-    res.json({
-      success: true,
-      summary: summary,
-      by_module: byModule,
-      trend_30_days: trend,
-      retrieved_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.error('[Platform] GET /costs error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var summary = await PlatformModel.getCostSummary();
+var byModule = await PlatformModel.getCostByModule();
+var trend = await PlatformModel.getCostTrend(30);
+res.json({
+success: true,
+summary: summary,
+by_module: byModule,
+trend_30_days: trend,
+retrieved_at: new Date().toISOString()
+});
+} catch (err) {
+console.error('[Platform] GET /costs error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/errors ──────────────────────────────────────────────────
 
 router.get('/errors', async function(req, res) {
-  try {
-    var errors = await PlatformModel.listErrors({
-      module_name: req.query.module_name,
-      severity: req.query.severity,
-      resolution_status: req.query.resolution_status,
-      limit: parseInt(req.query.limit || '50'),
-      offset: parseInt(req.query.offset || '0')
-    });
-    var errorSummary = await PlatformModel.getErrorSummary();
-    res.json({
-      success: true,
-      errors: errors,
-      summary: errorSummary,
-      count: errors.length,
-      retrieved_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.error('[Platform] GET /errors error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var errors = await PlatformModel.listErrors({
+module_name: req.query.module_name,
+severity: req.query.severity,
+resolution_status: req.query.resolution_status,
+limit: parseInt(req.query.limit || '50'),
+offset: parseInt(req.query.offset || '0')
+});
+var errorSummary = await PlatformModel.getErrorSummary();
+res.json({
+success: true,
+errors: errors,
+summary: errorSummary,
+count: errors.length,
+retrieved_at: new Date().toISOString()
+});
+} catch (err) {
+console.error('[Platform] GET /errors error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/config ──────────────────────────────────────────────────
 
 router.get('/config', async function(req, res) {
-  try {
-    var configs = await PlatformModel.getConfig(req.query.key || null);
-    res.json({ success: true, config: configs, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /config error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var configs = await PlatformModel.getConfig(req.query.key || null);
+res.json({ success: true, config: configs, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /config error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/audit ───────────────────────────────────────────────────
 
 router.get('/audit', async function(req, res) {
-  try {
-    var audit = await PlatformModel.listAudit({
-      module_affected: req.query.module,
-      limit: parseInt(req.query.limit || '100'),
-      offset: parseInt(req.query.offset || '0')
-    });
-    res.json({ success: true, audit: audit, count: audit.length, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] GET /audit error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var audit = await PlatformModel.listAudit({
+module_affected: req.query.module,
+limit: parseInt(req.query.limit || '100'),
+offset: parseInt(req.query.offset || '0')
+});
+res.json({ success: true, audit: audit, count: audit.length, retrieved_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] GET /audit error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/config ─────────────────────────────────────────────────
 
 router.post('/config', async function(req, res) {
-  try {
-    var key = req.body.key;
-    var value = req.body.value;
-    var performed_by = req.body.performed_by || 'admin';
+try {
+var key = req.body.key;
+var value = req.body.value;
+var performed_by = req.body.performed_by || 'admin';
 
-    if (!key || value === undefined) {
-      return res.status(400).json({ success: false, error: 'key and value are required' });
-    }
+if (!key || value === undefined) {
+return res.status(400).json({ success: false, error: 'key and value are required' });
+}
 
-    var before = await PlatformModel.getConfig(key);
-    var updated = await PlatformModel.setConfig(key, value, performed_by);
+var before = await PlatformModel.getConfig(key);
+var updated = await PlatformModel.setConfig(key, value, performed_by);
 
-    await PlatformModel.logAudit({
-      action: 'CONFIG_CHANGED',
-      performed_by: performed_by,
-      role: 'admin',
-      module_affected: 'platform_config',
-      before_state: before ? { key: key, value: before.config_value } : {},
-      after_state: { key: key, value: value },
-      details: 'Configuration key updated: ' + key
-    });
+await PlatformModel.logAudit({
+action: 'CONFIG_CHANGED',
+performed_by: performed_by,
+role: 'admin',
+module_affected: 'platform_config',
+before_state: before ? { key: key, value: before.config_value } : {},
+after_state: { key: key, value: value },
+details: 'Configuration key updated: ' + key
+});
 
-    res.json({ success: true, config: updated, updated_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] POST /config error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+res.json({ success: true, config: updated, updated_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] POST /config error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/retry ──────────────────────────────────────────────────
 
 router.post('/retry', async function(req, res) {
-  try {
-    var error_id = req.body.error_id;
-    var performed_by = req.body.performed_by || 'admin';
+try {
+var error_id = req.body.error_id;
+var performed_by = req.body.performed_by || 'admin';
 
-    if (!error_id) return res.status(400).json({ success: false, error: 'error_id is required' });
+if (!error_id) return res.status(400).json({ success: false, error: 'error_id is required' });
 
-    var resolved = await PlatformModel.resolveError(error_id, performed_by);
+var resolved = await PlatformModel.resolveError(error_id, performed_by);
 
-    await PlatformModel.logAudit({
-      action: 'MANUAL_RETRY',
-      performed_by: performed_by,
-      role: 'admin',
-      module_affected: resolved ? resolved.module_name : 'unknown',
-      after_state: { error_id: error_id, status: 'resolved' },
-      details: 'Manual retry triggered for error: ' + error_id
-    });
+await PlatformModel.logAudit({
+action: 'MANUAL_RETRY',
+performed_by: performed_by,
+role: 'admin',
+module_affected: resolved ? resolved.module_name : 'unknown',
+after_state: { error_id: error_id, status: 'resolved' },
+details: 'Manual retry triggered for error: ' + error_id
+});
 
-    res.json({ success: true, error: resolved, retried_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] POST /retry error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+res.json({ success: true, error: resolved, retried_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] POST /retry error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/pause ──────────────────────────────────────────────────
 
 router.post('/pause', async function(req, res) {
-  try {
-    var queue_name = req.body.queue_name;
-    var performed_by = req.body.performed_by || 'admin';
+try {
+var queue_name = req.body.queue_name;
+var performed_by = req.body.performed_by || 'admin';
 
-    if (!queue_name) return res.status(400).json({ success: false, error: 'queue_name is required' });
+if (!queue_name) return res.status(400).json({ success: false, error: 'queue_name is required' });
 
-    var updated = await PlatformModel.updateQueueStatus(queue_name, 'paused');
+var updated = await PlatformModel.updateQueueStatus(queue_name, 'paused');
 
-    await PlatformModel.logAudit({
-      action: 'QUEUE_PAUSED',
-      performed_by: performed_by,
-      role: 'admin',
-      module_affected: queue_name,
-      before_state: { status: 'running' },
-      after_state: { status: 'paused' },
-      details: 'Queue paused: ' + queue_name
-    });
+await PlatformModel.logAudit({
+action: 'QUEUE_PAUSED',
+performed_by: performed_by,
+role: 'admin',
+module_affected: queue_name,
+before_state: { status: 'running' },
+after_state: { status: 'paused' },
+details: 'Queue paused: ' + queue_name
+});
 
-    res.json({ success: true, queue: updated, paused_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] POST /pause error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+res.json({ success: true, queue: updated, paused_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] POST /pause error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/resume ─────────────────────────────────────────────────
 
 router.post('/resume', async function(req, res) {
-  try {
-    var queue_name = req.body.queue_name;
-    var performed_by = req.body.performed_by || 'admin';
+try {
+var queue_name = req.body.queue_name;
+var performed_by = req.body.performed_by || 'admin';
 
-    if (!queue_name) return res.status(400).json({ success: false, error: 'queue_name is required' });
+if (!queue_name) return res.status(400).json({ success: false, error: 'queue_name is required' });
 
-    var updated = await PlatformModel.updateQueueStatus(queue_name, 'running');
+var updated = await PlatformModel.updateQueueStatus(queue_name, 'running');
 
-    await PlatformModel.logAudit({
-      action: 'QUEUE_RESUMED',
-      performed_by: performed_by,
-      role: 'admin',
-      module_affected: queue_name,
-      before_state: { status: 'paused' },
-      after_state: { status: 'running' },
-      details: 'Queue resumed: ' + queue_name
-    });
+await PlatformModel.logAudit({
+action: 'QUEUE_RESUMED',
+performed_by: performed_by,
+role: 'admin',
+module_affected: queue_name,
+before_state: { status: 'paused' },
+after_state: { status: 'running' },
+details: 'Queue resumed: ' + queue_name
+});
 
-    res.json({ success: true, queue: updated, resumed_at: new Date().toISOString() });
-  } catch (err) {
-    console.error('[Platform] POST /resume error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+res.json({ success: true, queue: updated, resumed_at: new Date().toISOString() });
+} catch (err) {
+console.error('[Platform] POST /resume error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/health-check ──────────────────────────────────────────
 
 router.post('/health-check', async function(req, res) {
-  try {
-    var performed_by = req.body.performed_by || 'admin';
+try {
+var performed_by = req.body.performed_by || 'admin';
 
-    res.status(202).json({
-      success: true,
-      message: 'Full platform health check started',
-      started_at: new Date().toISOString()
-    });
+res.status(202).json({
+success: true,
+message: 'Full platform health check started',
+started_at: new Date().toISOString()
+});
 
-    setImmediate(async function() {
-      try {
-        var result = await PlatformMonitor.runFullHealthCheck();
-        await PlatformModel.logAudit({
-          action: 'HEALTH_CHECK_RUN',
-          performed_by: performed_by,
-          role: 'admin',
-          module_affected: 'all',
-          after_state: { overall_status: result.overall_status, modules_checked: result.modules_checked },
-          details: 'Manual full health check completed. Status: ' + result.overall_status
-        });
-        console.log('[Platform] Health check complete:', result.overall_status);
-      } catch (err) {
-        console.error('[Platform] Health check error:', err.message);
-      }
-    });
-  } catch (err) {
-    console.error('[Platform] POST /health-check error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+setImmediate(async function() {
+try {
+var result = await PlatformMonitor.runFullHealthCheck();
+await PlatformModel.logAudit({
+action: 'HEALTH_CHECK_RUN',
+performed_by: performed_by,
+role: 'admin',
+module_affected: 'all',
+after_state: { overall_status: result.overall_status, modules_checked: result.modules_checked },
+details: 'Manual full health check completed. Status: ' + result.overall_status
+});
+console.log('[Platform] Health check complete:', result.overall_status);
+} catch (err) {
+console.error('[Platform] Health check error:', err.message);
+}
+});
+} catch (err) {
+console.error('[Platform] POST /health-check error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/dashboard ───────────────────────────────────────────────
 
 router.get('/dashboard', async function(req, res) {
-  try {
-    var [modules, queues, integrations, models, prompts, costs, errors, audit, perf, backup] = await Promise.all([
-      PlatformModel.getModuleHealthLatest().catch(function() { return []; }),
-      PlatformModel.getAllQueues().catch(function() { return []; }),
-      PlatformModel.getAllIntegrations().catch(function() { return []; }),
-      PlatformModel.getAllModels().catch(function() { return []; }),
-      PlatformModel.getAllPrompts().catch(function() { return []; }),
-      PlatformModel.getCostSummary().catch(function() { return {}; }),
-      PlatformModel.listErrors({ resolution_status: 'open', limit: 10 }).catch(function() { return []; }),
-      PlatformModel.listAudit({ limit: 10 }).catch(function() { return []; }),
-      PlatformModel.getLatestPerformance().catch(function() { return null; }),
-      PlatformModel.getLatestBackupStatus().catch(function() { return null; })
-    ]);
+try {
+var [modules, queues, integrations, models, prompts, costs, errors, audit, perf, backup] = await Promise.all([
+PlatformModel.getModuleHealthLatest().catch(function() { return []; }),
+PlatformModel.getAllQueues().catch(function() { return []; }),
+PlatformModel.getAllIntegrations().catch(function() { return []; }),
+PlatformModel.getAllModels().catch(function() { return []; }),
+PlatformModel.getAllPrompts().catch(function() { return []; }),
+PlatformModel.getCostSummary().catch(function() { return {}; }),
+PlatformModel.listErrors({ resolution_status: 'open', limit: 10 }).catch(function() { return []; }),
+PlatformModel.listAudit({ limit: 10 }).catch(function() { return []; }),
+PlatformModel.getLatestPerformance().catch(function() { return null; }),
+PlatformModel.getLatestBackupStatus().catch(function() { return null; })
+]);
 
-    var alerts = await PlatformMonitor.generateSystemAlerts().catch(function() { return []; });
+var alerts = await PlatformMonitor.generateSystemAlerts().catch(function() { return []; });
 
-    var overallHealth = modules.every(function(m) { return m.status === 'healthy'; }) &&
-      integrations.every(function(i) { return i.status !== 'unhealthy'; }) ? 'healthy' : 'degraded';
+var overallHealth = modules.every(function(m) { return m.status === 'healthy'; }) &&
+integrations.every(function(i) { return i.status !== 'unhealthy'; }) ? 'healthy' : 'degraded';
 
-    res.json({
-      success: true,
-      dashboard: {
-        overall_health: overallHealth,
-        module_summary: {
-          total: modules.length,
-          healthy: modules.filter(function(m) { return m.status === 'healthy'; }).length,
-          degraded: modules.filter(function(m) { return m.status === 'degraded'; }).length,
-          unhealthy: modules.filter(function(m) { return m.status === 'unhealthy'; }).length
-        },
-        modules: modules,
-        queue_summary: {
-          total: queues.length,
-          running: queues.filter(function(q) { return q.status === 'running'; }).length,
-          paused: queues.filter(function(q) { return q.status === 'paused'; }).length
-        },
-        queues: queues,
-        integration_summary: {
-          total: integrations.length,
-          healthy: integrations.filter(function(i) { return i.status === 'healthy'; }).length
-        },
-        integrations: integrations,
-        active_models: models.filter(function(m) { return m.status === 'active'; }),
-        active_prompts: prompts.filter(function(p) { return p.status === 'active'; }).length,
-        cost_today: costs.today_cost || 0,
-        cost_this_week: costs.week_cost || 0,
-        open_errors: errors.length,
-        alerts: alerts,
-        recent_audit: audit,
-        performance: perf,
-        backup_status: backup
-      },
-      retrieved_at: new Date().toISOString()
-    });
-  } catch (err) {
-    console.error('[Platform] GET /dashboard error:', err.message);
-    res.status(500).json({ success: false, error: err.message });
-  }
+res.json({
+success: true,
+dashboard: {
+overall_health: overallHealth,
+module_summary: {
+total: modules.length,
+healthy: modules.filter(function(m) { return m.status === 'healthy'; }).length,
+degraded: modules.filter(function(m) { return m.status === 'degraded'; }).length,
+unhealthy: modules.filter(function(m) { return m.status === 'unhealthy'; }).length
+},
+modules: modules,
+queue_summary: {
+total: queues.length,
+running: queues.filter(function(q) { return q.status === 'running'; }).length,
+paused: queues.filter(function(q) { return q.status === 'paused'; }).length
+},
+queues: queues,
+integration_summary: {
+total: integrations.length,
+healthy: integrations.filter(function(i) { return i.status === 'healthy'; }).length
+},
+integrations: integrations,
+active_models: models.filter(function(m) { return m.status === 'active'; }),
+active_prompts: prompts.filter(function(p) { return p.status === 'active'; }).length,
+cost_today: costs.today_cost || 0,
+cost_this_week: costs.week_cost || 0,
+open_errors: errors.length,
+alerts: alerts,
+recent_audit: audit,
+performance: perf,
+backup_status: backup
+},
+retrieved_at: new Date().toISOString()
+});
+} catch (err) {
+console.error('[Platform] GET /dashboard error:', err.message);
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── POST /api/platform/log-error ──────────────────────────────────────────────
 
 router.post('/log-error', async function(req, res) {
-  try {
-    var err = await PlatformModel.logError(req.body);
-    res.json({ success: true, error_record: err });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
+try {
+var err = await PlatformModel.logError(req.body);
+res.json({ success: true, error_record: err });
+} catch (e) {
+res.status(500).json({ success: false, error: e.message });
+}
 });
 
 // ── POST /api/platform/log-cost ───────────────────────────────────────────────
 
 router.post('/log-cost', async function(req, res) {
-  try {
-    var cost = await PlatformModel.logCostEvent(req.body);
-    res.json({ success: true, cost_record: cost });
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
+try {
+var cost = await PlatformModel.logCostEvent(req.body);
+res.json({ success: true, cost_record: cost });
+} catch (e) {
+res.status(500).json({ success: false, error: e.message });
+}
 });
 
 // ── GET /api/platform/deployments ────────────────────────────────────────────
 
 router.get('/deployments', async function(req, res) {
-  try {
-    var deploys = await PlatformModel.listDeployments(parseInt(req.query.limit || '20'));
-    res.json({ success: true, deployments: deploys, count: deploys.length, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var deploys = await PlatformModel.listDeployments(parseInt(req.query.limit || '20'));
+res.json({ success: true, deployments: deploys, count: deploys.length, retrieved_at: new Date().toISOString() });
+} catch (err) {
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 // ── GET /api/platform/performance ────────────────────────────────────────────
 
 router.get('/performance', async function(req, res) {
-  try {
-    var perf = await PlatformMonitor.capturePerformance();
-    res.json({ success: true, performance: perf, retrieved_at: new Date().toISOString() });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+try {
+var perf = await PlatformMonitor.capturePerformance();
+res.json({ success: true, performance: perf, retrieved_at: new Date().toISOString() });
+} catch (err) {
+res.status(500).json({ success: false, error: err.message });
+}
 });
 
 module.exports = router;
