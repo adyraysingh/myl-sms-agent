@@ -1,11 +1,21 @@
 'use strict';
+/**
+ * RevenueForecaster — Phase 3.6 Hardened
+ * FIXES:
+ *  1. Uses shared pool (src/memory/db/pool.js) instead of creating its own new Pool.
+ *     Eliminates pool fragmentation — each extra Pool() was stealing connections
+ *     from the Railway session-mode limit of 15, causing EMAXCONNSESSION.
+ *  2. evaluateForecast() now correctly calls ForecastModel.findById()
+ *     (aliased in Phase 3.6 ForecastModel fix).
+ *  3. evaluateForecast() now correctly calls ForecastModel.saveEvaluation()
+ *     (added in Phase 3.6 ForecastModel fix).
+ */
 const OpenAI = require('openai');
-const { Pool } = require('pg');
 const ForecastModel = require('../models/ForecastModel');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
+const pool = require('../../memory/db/pool');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 const MODEL_VERSION = '1.0';
 
@@ -103,7 +113,6 @@ key_drivers: aiResult ? aiResult.key_drivers : [], risks: aiResult ? aiResult.ri
 opportunities: aiResult ? aiResult.opportunities : [], recommended_actions: aiResult ? aiResult.recommended_actions : [],
 assumptions: scenarios[1] ? scenarios[1].assumptions : [], model_version: MODEL_VERSION
 });
-// Phase 3.1: Auto-publish revenue prediction (fire-and-forget)
 setImmediate(() => PredictionPublisher.revenue({
 forecast_id: forecast.forecast_id, period_type: periodType, period_start: periodStart, period_end: periodEnd,
 base_forecast: Math.round(base*100)/100, optimistic_forecast: Math.round(base*1.35*100)/100,
