@@ -49,6 +49,10 @@ const chaosTestRoutes = require('./queue/chaos-test.routes');
 // Phase 3: Learning Engine
 const LearningScheduler = require('./learning/services/LearningScheduler');
 
+// Phase 4: Autonomous AI Revenue Operations
+const AgentOrchestrator = require('./agents/AgentOrchestrator');
+const agentRoutes = require('./agents/routes/agent.routes');
+
 // Phase 3.3: Simulation Engine
 const simulationRoutes = require('./simulation/simulation.routes');
 
@@ -126,6 +130,15 @@ const learningSql3 = fs.readFileSync(learningMigration3, 'utf8');
 await pool.query(learningSql3);
 console.log('[LearningScheduler] Phase 3 learning migration: SUCCESS');
 LearningScheduler.start();
+    // Phase 4: Run agent migration and start autonomous agents
+    try {
+      const agentMigPath = require('path').join(__dirname, 'agents', 'db', 'migrations', '020_phase4_agents.sql');
+      const agentSql = require('fs').readFileSync(agentMigPath, 'utf8');
+      await pool.query(agentSql);
+      console.log('[AgentOrchestrator] Phase 4 agent migration: SUCCESS');
+      AgentOrchestrator.start();
+      console.log('[AgentOrchestrator] Phase 4 autonomous agents started');
+    } catch (agentErr) { logger.error('[app] Phase 4 agent initialization failed:', agentErr.message); }
 console.log('[LearningScheduler] Phase 3 learning scheduler started');
 } catch (err) {
 logger.error('[app] Phase 3 learning initialization failed:', err.message);
@@ -179,6 +192,7 @@ app.use('/api/learning', learningRoutes);
 app.use('/api/operations', operationsRoutes);
 app.use('/api/revenue', revenueRoutes);
 app.use('/api/platform', platformRoutes);
+app.use('/api/agents', agentRoutes);
 
 // Phase 3.3: Simulation routes
 app.use('/api/simulation', simulationRoutes);
