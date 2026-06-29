@@ -11,6 +11,7 @@ const JobQueue = require('./JobQueue');
 
 // Lazy-load processors to avoid circular dependencies
 let _QualificationProcessor, _DecisionProcessor, _ConversationProcessor;
+let _AgentRunner;
 let _RevenueForecaster, _LearningEngine, _IntelligenceProcessor, _WorkflowEngine;
 
 function getQP() { if (!_QualificationProcessor) _QualificationProcessor = require('../qualification/services/QualificationProcessor'); return _QualificationProcessor; }
@@ -18,6 +19,7 @@ function getDP() { if (!_DecisionProcessor) _DecisionProcessor = require('../dec
 function getCP() { if (!_ConversationProcessor) _ConversationProcessor = require('../intelligence/services/ConversationProcessor'); return _ConversationProcessor; }
 function getRF() { if (!_RevenueForecaster) _RevenueForecaster = require('../revenue/services/RevenueForecaster'); return _RevenueForecaster; }
 function getLE() { if (!_LearningEngine) _LearningEngine = require('../learning/services/LearningEngine'); return _LearningEngine; }
+function getAR() { if (!_AgentRunner) _AgentRunner = require("../agents/AgentRunner"); return _AgentRunner; }
 function getIP() { if (!_IntelligenceProcessor) _IntelligenceProcessor = require('../intelligence/services/IntelligenceProcessor'); return _IntelligenceProcessor; }
 
 // ─── Job Handlers ───────────────────────────────────────────────────────────
@@ -49,6 +51,11 @@ async function handleLearningEvaluation(payload) {
 
 async function handleIntelligenceRefresh(payload) {
   await getIP().triggerRefresh(payload.event_type || 'manual', payload.context || {});
+}
+
+async function handleAgentRun(payload) {
+  const AR = getAR();
+  await AR.run(payload);
 }
 
 // ─── Worker Configuration ───────────────────────────────────────────────────
@@ -87,6 +94,13 @@ const WORKER_CONFIG = [
     handler: handleLearningEvaluation,
     pollIntervalMs: 60000,
     concurrency: 1,
+    batchSize: 1
+  },
+  {
+    queueName: 'agent',
+    handler: handleAgentRun,
+    pollIntervalMs: 60000,
+    concurrency: 2,
     batchSize: 1
   },
   {
@@ -184,6 +198,10 @@ WorkerRegistry.enqueueRevenueForecast = function({ period = 'daily' } = {}) {
     maxAttempts: 2,
     delayMs: 0
   });
+};
+
+WorkerRegistry.enqueueAgent = function({ agent_name, scheduled_at }) {
+  return JobQueue.enqueue({ queueName: "agent", jobType: "run_agent", payload: { agent_name, scheduled_at: scheduled_at || new Date().toISOString() }, priority: 3, maxAttempts: 2, idempotencyKey: "agent:" + agent_name + ":" + Math.floor(Date.now()/60000) });
 };
 
 module.exports = WorkerRegistry;
