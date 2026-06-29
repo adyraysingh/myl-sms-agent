@@ -1,6 +1,6 @@
 'use strict';
-const pool = require('../../memory/db/pool');
-const PredictionPublisher = require('../../learning/services/PredictionPublisher');
+const pool = require('../memory/db/pool');
+const PredictionPublisher = require('../learning/services/PredictionPublisher');
 const AGENTS = {
   revenue_optimization: () => require('./services/RevenueOptimizationAgent'),
   sales_coach:          () => require('./services/SalesCoachAgent'),
