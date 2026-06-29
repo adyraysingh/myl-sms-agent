@@ -17,11 +17,19 @@ const pool = require('../../memory/db/pool');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+function _safeDateISO(val, fallback) {
+  if (val === undefined || val === null) return fallback;
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return fallback;
+  return d.toISOString();
+}
+
+
 const MODEL_VERSION = '1.0';
 
 async function collectBusinessData(periodStart, periodEnd) {
-const start = new Date(periodStart).toISOString();
-const end = new Date(periodEnd).toISOString();
+const start = _safeDateISO(periodStart, new Date(Date.now()-86400000).toISOString());
+const end = _safeDateISO(periodEnd, new Date().toISOString());
 const [leads, qualifications, decisions, conversations, briefings, workflows, learningEvents] = await Promise.all([
 pool.query("SELECT id, zoho_lead_id, full_name, email, phone, company, pipeline_stage, is_onboarded, lead_owner_id, created_at FROM lead_memory WHERE created_at BETWEEN $1 AND $2 ORDER BY created_at DESC", [start, end]).catch(() => ({ rows: [] })),
 pool.query("SELECT * FROM lead_qualification WHERE last_qualified_at BETWEEN $1 AND $2 ORDER BY last_qualified_at DESC", [start, end]).catch(() => ({ rows: [] })),
@@ -71,7 +79,8 @@ case 'daily': start.setHours(0,0,0,0); end.setHours(23,59,59,999); break;
 case 'weekly': start.setDate(start.getDate()-start.getDay()); start.setHours(0,0,0,0); end.setDate(start.getDate()+6); end.setHours(23,59,59,999); break;
 case 'monthly': start.setDate(1); start.setHours(0,0,0,0); end.setMonth(end.getMonth()+1,0); end.setHours(23,59,59,999); break;
 case 'quarterly': { const q = Math.floor(now.getMonth()/3); start.setMonth(q*3,1); start.setHours(0,0,0,0); end.setMonth(q*3+3,0); end.setHours(23,59,59,999); break; }
-case 'rolling_30': start.setDate(start.getDate()-30); break;
+case 'yearly': start.setMonth(0,1); start.setHours(0,0,0,0); end.setMonth(11,31); end.setHours(23,59,59,999); break;
+      case 'rolling_30': start.setDate(start.getDate()-30); break;
 case 'rolling_90': start.setDate(start.getDate()-90); break;
 default: start.setDate(1); start.setHours(0,0,0,0);
 }
@@ -80,6 +89,7 @@ return { start: start.toISOString(), end: end.toISOString() };
 
 static async runForecast(periodType, periodStart, periodEnd) {
 const processingStart = Date.now();
+const _sd=new Date(periodStart),_ed=new Date(periodEnd);if(!periodStart||isNaN(_sd.getTime())||!periodEnd||isNaN(_ed.getTime())){const bounds=RevenueForecaster.getPeriodBounds(periodType||'daily');periodStart=bounds.start;periodEnd=bounds.end;console.warn('[RevenueForecaster] Invalid dates, derived:',periodType,periodStart,'->',periodEnd);}
 console.log('[RevenueForecaster] Running forecast:', periodType, periodStart, '->', periodEnd);
 const data = await collectBusinessData(periodStart, periodEnd);
 const metrics = computePipelineMetrics(data);
