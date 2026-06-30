@@ -1,4 +1,4 @@
-'use strict';
+—'use strict';
 const pool = require('../../memory/db/pool');
 const AIDecision = require('../models/AIDecision');
 const DecisionHistory = require('../models/DecisionHistory');
