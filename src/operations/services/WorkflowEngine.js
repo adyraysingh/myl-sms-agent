@@ -11,8 +11,8 @@ async function actionCreateInternalNote({ lead_id, decision_type, reason, owner 
   // Creates an internal AI note in business memory (never modifies CRM manual notes)
   try {
     await pool.query(
-      'INSERT INTO events (lead_id, event_type, event_data, created_at) VALUES ($1,$2,$3,NOW()) ON CONFLICT DO NOTHING',
-      [lead_id, 'ai_operational_note', JSON.stringify({ decision_type, reason, owner, source: 'workflow_engine' })]
+      'INSERT INTO lead_events (lead_memory_id, event_type, payload, source, actor_type) VALUES ($1,$2,$3,$4,$5)',
+      [lead_id, 'ai_operational_note', JSON.stringify({ decision_type, reason, owner, source: 'workflow_engine' }), 'workflow_engine', 'ai']
     );
     return { success: true, action: 'internal_note_created', lead_id };
   } catch (e) { return { success: false, error: e.message }; }
