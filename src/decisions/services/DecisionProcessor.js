@@ -91,7 +91,7 @@ trigger_event: item.trigger_event,
 metadata: {}
 });
 if (dec.priority === 'critical' || dec.priority === 'high') {
-await SlackNotifier.notifyDecision(dec, leadData.memory).catch(e => console.error('[DP] Slack error:', e.message));
+await SlackNotifier.notifyDecisionGenerated({ ...dec, lead_name: leadData.memory.name, crm_owner: dec.crm_owner || leadData.memory.crm_owner, zoho_lead_id: resolvedZohoId }).catch(e => console.error('[DP] Slack error:', e.message));
 }
 }
 
