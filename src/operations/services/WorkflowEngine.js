@@ -8,16 +8,18 @@ const pool = require('../../memory/db/pool');
 // Each handler performs ONE safe internal operational task
 
 async function actionCreateInternalNote({ lead_id, decision_type, reason, owner }) {
-  // Creates an internal AI note in business memory (never modifies CRM manual notes)
-  try {
-    await pool.query(
-      'INSERT INTO lead_events (lead_memory_id, event_type, payload, source, actor_type) VALUES ($1,$2,$3,$4,$5)',
-      [lead_id, 'ai_operational_note', JSON.stringify({ decision_type, reason, owner, source: 'workflow_engine' }), 'workflow_engine', 'ai']
-    );
-    return { success: true, action: 'internal_note_created', lead_id };
-  } catch (e) { return { success: false, error: e.message }; }
+// Creates an internal AI note in business memory (never modifies CRM manual notes)
+try {
+  // Look up zoho_lead_id from lead_memory (required NOT NULL column)
+  const memRow = await pool.query('SELECT zoho_lead_id FROM lead_memory WHERE id=$1', [lead_id]);
+  const zoho_lead_id = memRow.rows[0] ? memRow.rows[0].zoho_lead_id : null;
+  await pool.query(
+    'INSERT INTO lead_events (lead_memory_id, event_type, payload, source, actor_type, zoho_lead_id) VALUES ($1,$2,$3,$4,$5,$6)',
+    [lead_id, 'ai_operational_note', JSON.stringify({ decision_type, reason, owner, source: 'workflow_engine' }), 'workflow_engine', 'ai', zoho_lead_id]
+  );
+  return { success: true, action: 'internal_note_created', lead_id };
+} catch (e) { return { success: false, error: e.message }; }
 }
-
 async function actionSendSlackNotification({ owner, lead_id, lead_name, decision_type, priority, reason, due_time, status }) {
   // Sends Slack notification to assigned CRM owner only — never changes ownership
   try {
