@@ -5,6 +5,7 @@ const AIAnalysisService = require('./AIAnalysisService');
 const ZohoCRMUpdater = require('./ZohoCRMUpdater');
 const LeadMemory = require('../../memory/models/LeadMemory');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
+const EventOrchestrator = require('../../services/EventOrchestrator');
 const crypto = require('crypto');
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function toUUID(s) { if (!s) return crypto.randomUUID(); if (UUID_RE.test(s)) return s; const m = s.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i); if (m) return m[0]; return crypto.createHash('sha256').update(String(s)).digest('hex').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/, '$1-$2-$3-$4-$5'); }
@@ -57,7 +58,9 @@ static async _processJob(job) {
       const sanitized = AIAnalysisService.sanitize(rawAnalysis);
       const saved = await ConversationAnalysis.saveAnalysis(analysisId, sanitized);
       const elapsed = Date.now() - startTime;
-      console.log('[ConversationProcessor] Analysis ' + analysisId + ' completed in ' + elapsed + 'ms');
+      console.log('[Conv
+      // Bug #6 fix: emit conversation.analyzed so EventOrchestrator can trigger Decision + Qualification
+      setImmediate(() => EventOrchestrator.emit('conversation.analyzed', { lead_id: leadId, zoho_lead_id: zohoLeadId || null, analysis_id: analysisId }));ersationProcessor] Analysis ' + analysisId + ' completed in ' + elapsed + 'ms');
       // Phase 3.1: Auto-publish conversation prediction (fire-and-forget)
     setImmediate(() => PredictionPublisher.conversation(leadId, sanitized).catch(() => {}));
       if (zohoLeadId) {
