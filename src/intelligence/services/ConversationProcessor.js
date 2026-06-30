@@ -58,9 +58,9 @@ static async _processJob(job) {
       const sanitized = AIAnalysisService.sanitize(rawAnalysis);
       const saved = await ConversationAnalysis.saveAnalysis(analysisId, sanitized);
       const elapsed = Date.now() - startTime;
-      console.log('[Conv
-      // Bug #6 fix: emit conversation.analyzed so EventOrchestrator can trigger Decision + Qualification
-      setImmediate(() => EventOrchestrator.emit('conversation.analyzed', { lead_id: leadId, zoho_lead_id: zohoLeadId || null, analysis_id: analysisId }));ersationProcessor] Analysis ' + analysisId + ' completed in ' + elapsed + 'ms');
+      console.log('[ConversationProcessor] Analysis ' + analysisId + ' completed in ' + elapsed + 'ms');
+        // Bug #6 fix: emit conversation.analyzed so EventOrchestrator can trigger Decision + Qualification
+        setImmediate(() => EventOrchestrator.emit('conversation.analyzed', { lead_id: leadId, zoho_lead_id: zohoLeadId || null, analysis_id: analysisId }));
       // Phase 3.1: Auto-publish conversation prediction (fire-and-forget)
     setImmediate(() => PredictionPublisher.conversation(leadId, sanitized).catch(() => {}));
       if (zohoLeadId) {
