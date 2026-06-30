@@ -444,3 +444,99 @@ res.status(500).json({ success: false, error: err.message });
 });
 
 module.exports = router;
+
+// ── GET /api/platform/ai-metrics ─────────────────────────────────────────────
+// Task 7: Expose existing production AI metrics for business execution dashboard
+
+router.get('/ai-metrics', async function(req, res) {
+    try {
+          var [decisionStats, recStats, qualStats, predStats, convStats, agentStats, wfStats] = await Promise.all([
+                  // Decision execution rate
+                                                                                                                        pool.query("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='executed') as executed, COUNT(*) FILTER (WHERE status='expired') as expired, COUNT(*) FILTER (WHERE status='created') as pending FROM ai_decisions").catch(function() { return { rows: [{}] }; }),
+                  // Recommendation acceptance rate
+                  pool.query("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status='accepted') as accepted, COUNT(*) FILTER (WHERE status='rejected') as rejected, COUNT(*) FILTER (WHERE status='expired') as expired, COUNT(*) FILTER (WHERE status='open') as open, COUNT(*) FILTER (WHERE status='in_progress') as in_progress FROM agent_recommendations").catch(function() { return { rows: [{}] }; }),
+                  // Qualification accuracy
+                  pool.query("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE calculation_status='completed') as completed, COUNT(*) FILTER (WHERE calculation_status='failed') as failed, ROUND(AVG(onboarding_probability),1) as avg_probability, COUNT(*) FILTER (WHERE category='hot') as hot, COUNT(*) FILTER (WHERE category='warm') as warm, COUNT(*) FILTER (WHERE category='cold') as cold FROM lead_qualification").catch(function() { return { rows: [{}] }; }),
+                  // Prediction evaluation coverage
+                  pool.query("SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE evaluation_status='evaluated') as evaluated, COUNT(*) FILTER (WHERE evaluation_status='pending') as pending, COUNT(*) FILTER (WHERE evaluation_status='expired') as expired, module, prediction_type FROM ai_predictions GROUP BY module, prediction_type").catch(function() { return { rows: [] }; }),
+                  // Conversation confidence distribution
+                  pool.query("SELECT COUNT(*) as total, ROUND(AVG(confidence_score),3) as avg_confidence, MIN(confidence_score) as min_confidence, MAX(confidence_score) as max_confidence, COUNT(*) FILTER (WHERE confidence_score >= 0.8) as high_confidence, COUNT(*) FILTER (WHERE confidence_score BETWEEN 0.5 AND 0.8) as medium_confidence, COUNT(*) FILTER (WHERE confidence_score < 0.5) as low_confidence FROM conversation_analysis WHERE analysis_status='completed'").catch(function() { return { rows: [{}] }; }),
+                  // Agent ROI and acceptance rate by agent_name
+                  pool.query("SELECT agent_name, COUNT(*) as total, COUNT(*) FILTER (WHERE status='accepted') as accepted, COUNT(*) FILTER (WHERE status='rejected') as rejected, COUNT(*) FILTER (WHERE status='open') as open FROM agent_recommendations GROUP BY agent_name ORDER BY agent_name").catch(function() { return { rows: [] }; }),
+                  // Workflow execution stats
+                  pool.query("SELECT status, COUNT(*) as cnt FROM automation_workflows GROUP BY status").catch(function() { return { rows: [] }; })
+                ]);
+
+      var dec = decisionStats.rows[0] || {};
+          var rec = recStats.rows[0] || {};
+          var qual = qualStats.rows[0] || {};
+          var conv = convStats.rows[0] || {};
+
+      var decTotal = parseInt(dec.total || 0);
+          var decExecuted = parseInt(dec.executed || 0);
+          var recTotal = parseInt(rec.total || 0);
+          var recAccepted = parseInt(rec.accepted || 0);
+          var qualTotal = parseInt(qual.total || 0);
+          var qualCompleted = parseInt(qual.completed || 0);
+
+      var predTotal = 0; var predEvaluated = 0;
+          predStats.rows.forEach(function(r) { predTotal += parseInt(r.total || 0); predEvaluated += parseInt(r.evaluated || 0); });
+
+      var wfByStatus = {};
+          wfStats.rows.forEach(function(r) { wfByStatus[r.status] = parseInt(r.cnt || 0); });
+
+      res.json({
+              success: true,
+              ai_metrics: {
+                        decision_execution: {
+                                    total: decTotal,
+                                    executed: decExecuted,
+                                    execution_rate: decTotal > 0 ? Math.round(decExecuted / decTotal * 1000) / 10 : 0,
+                                    pending: parseInt(dec.pending || 0),
+                                    expired: parseInt(dec.expired || 0)
+                        },
+                        recommendation_lifecycle: {
+                                    total: recTotal,
+                                    open: parseInt(rec.open || 0),
+                                    in_progress: parseInt(rec.in_progress || 0),
+                                    accepted: recAccepted,
+                                    rejected: parseInt(rec.rejected || 0),
+                                    expired: parseInt(rec.expired || 0),
+                                    acceptance_rate: recTotal > 0 ? Math.round(recAccepted / recTotal * 1000) / 10 : 0,
+                                    by_agent: agentStats.rows
+                        },
+                        qualification_accuracy: {
+                                    total: qualTotal,
+                                    completed: qualCompleted,
+                                    failed: parseInt(qual.failed || 0),
+                                    completion_rate: qualTotal > 0 ? Math.round(qualCompleted / qualTotal * 1000) / 10 : 0,
+                                    avg_onboarding_probability: parseFloat(qual.avg_probability || 0),
+                                    categories: { hot: parseInt(qual.hot || 0), warm: parseInt(qual.warm || 0), cold: parseInt(qual.cold || 0) }
+                        },
+                        prediction_evaluation: {
+                                    total: predTotal,
+                                    evaluated: predEvaluated,
+                                    pending: predTotal - predEvaluated,
+                                    evaluation_rate: predTotal > 0 ? Math.round(predEvaluated / predTotal * 1000) / 10 : 0,
+                                    by_module: predStats.rows
+                        },
+                        conversation_confidence: {
+                                    total: parseInt(conv.total || 0),
+                                    avg_confidence: parseFloat(conv.avg_confidence || 0),
+                                    min_confidence: parseFloat(conv.min_confidence || 0),
+                                    max_confidence: parseFloat(conv.max_confidence || 0),
+                                    high_confidence: parseInt(conv.high_confidence || 0),
+                                    medium_confidence: parseInt(conv.medium_confidence || 0),
+                                    low_confidence: parseInt(conv.low_confidence || 0)
+                        },
+                        workflow_execution: wfByStatus
+              },
+              retrieved_at: new Date().toISOString()
+      });
+    } catch (err) {
+          console.error('[Platform] GET /ai-metrics error:', err.message);
+          res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+module.exports = router;
