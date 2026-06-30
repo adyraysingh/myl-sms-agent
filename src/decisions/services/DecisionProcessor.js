@@ -7,6 +7,7 @@ const ZohoDecisionSync = require('./ZohoDecisionSync');
 const SlackNotifier = require('../../services/SlackNotifier');
 const { ContextEngine, InsufficientContextError } = require('../../services/ContextEngine');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
+const EventOrchestrator = require('../../services/EventOrchestrator');
 
 let isProcessing = false;
 let processorInterval = null;
@@ -99,16 +100,11 @@ class DecisionProcessor {
                 // Pass resolvedZohoId so _storeInTimeline can use the correct schema column
           await DecisionProcessor._storeInTimeline(resolvedLeadId, resolvedZohoId, saved, result);
                 await AIDecision.updateQueueStatus(item.queue_id, 'completed');
+        // Bug #5 fix: emit decision.generated so EventOrchestrator can trigger WorkflowEngine
+        if (saved.length > 0) { setImmediate(() => EventOrchestrator.emit('decision.generated', { lead_id: resolvedLeadId, zoho_lead_id: resolvedZohoId, decisions: saved, lead_name: (leadData.memory && leadData.memory.name) || resolvedLeadId })); }
 
         } catch (err) {
-                console.error('[DP] Error for lead:', item.lead_id, err.message);
-                await AIDecision.updateQueueStatus(item.queue_id, item.attempts >= item.max_attempts - 1 ? 'failed' : 'pending', err.message);
-        }
-  }
-
-  static _buildLeadDataFromContext(lead_id, zoho_lead_id, trigger_event, trigger_source, ctx) {
-        const { context, signal_counts } = ctx;
-        const mem = context.profile || {};
+                console.error('[DP] Error for
         const qual = context.qualification || null;
         const conv = context.latest_conversation || {};
         const memory = {
