@@ -8,10 +8,10 @@ var SERVER_START = Date.now();
 // ── Module definitions ───────────────────────────────────────────────────────
 
 var MODULES = [
-{ name: 'business_memory', version: '1.0', tables: ['leads', 'conversations', 'events'] },
+{ name: 'business_memory', version: '1.0', tables: ['lead_memory', 'conversations', 'conversation_analysis'] },
 { name: 'conversation_intelligence', version: '1.0', tables: ['conversation_analysis'] },
-{ name: 'qualification_engine', version: '1.0', tables: ['onboarding_qualifications'] },
-{ name: 'decision_engine', version: '1.0', tables: ['decisions'] },
+{ name: 'qualification_engine', version: '1.0', tables: ['lead_qualification'] },
+{ name: 'decision_engine', version: '1.0', tables: ['ai_decisions'] },
 { name: 'sales_intelligence', version: '1.0', tables: ['sales_performance'] },
 { name: 'executive_intelligence', version: '1.0', tables: ['executive_briefings'] },
 { name: 'investigation_engine', version: '1.0', tables: ['investigations'] },
@@ -355,8 +355,8 @@ return results;
 async function syncQueueStatus() {
 var queueDefs = [
 { queue_name: 'conversation_analysis', table: 'conversation_analysis' },
-{ queue_name: 'lead_qualification', table: 'onboarding_qualifications' },
-{ queue_name: 'decision_processing', table: 'decisions' },
+{ queue_name: 'lead_qualification', table: 'lead_qualification' },
+{ queue_name: 'decision_processing', table: 'ai_decisions' },
 { queue_name: 'workflow_execution', table: 'automation_workflows' },
 { queue_name: 'forecast_generation', table: 'revenue_forecasts' },
 { queue_name: 'learning_evaluation', table: 'learning_events' },

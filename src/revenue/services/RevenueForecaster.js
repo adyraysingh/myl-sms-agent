@@ -14,6 +14,7 @@ const OpenAI = require('openai');
 const ForecastModel = require('../models/ForecastModel');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
 const pool = require('../../memory/db/pool');
+const PlatformModel = require('../../platform/models/PlatformModel');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -106,7 +107,7 @@ let aiResult = null;
 try {
 const prompt = 'You are a revenue intelligence AI. Analyze this B2B private label clothing manufacturer pipeline and provide a forecast. Data: Period: ' + periodType + ' | Leads: ' + data.leads.length + ' | Hot: ' + metrics.breakdown.hot + ' | Warm: ' + metrics.breakdown.warm + ' | Expected: $' + Math.round(base) + ' | Win rate: ' + Math.round(data.historicalWinRate*100) + '%. Respond with JSON: {"forecast_narrative":"...","key_drivers":[],"risks":[],"opportunities":[],"recommended_actions":[],"confidence_explanation":"..."}';
 const completion = await openai.chat.completions.create({ model: 'gpt-4o', messages: [{ role: 'user', content: prompt }], response_format: { type: 'json_object' }, temperature: 0.3, max_tokens: 800 });
-aiResult = JSON.parse(completion.choices[0].message.content);
+aiResult = JSON.parse(completion.choices[0].message.content); setImmediate(() => PlatformModel.logCostEvent({ module_name: 'revenue_forecaster', operation_type: 'runForecast', model_used: completion.model || 'gpt-4o', tokens_input: completion.usage ? completion.usage.prompt_tokens : 0, tokens_output: completion.usage ? completion.usage.completion_tokens : 0, cost_usd: completion.usage ? ((completion.usage.prompt_tokens * 0.000005) + (completion.usage.completion_tokens * 0.000015)) : 0, latency_ms: Date.now() - processingStart, success: true }).catch(() => {}));
 } catch (e) {
 console.error('[RevenueForecaster] AI narrative failed:', e.message);
 aiResult = { forecast_narrative: 'Pipeline has ' + data.leads.length + ' leads with weighted value $' + Math.round(base) + '.', key_drivers: ['Lead count: ' + data.leads.length], risks: [], opportunities: [], recommended_actions: [], confidence_explanation: 'Based on historical win rate.' };
