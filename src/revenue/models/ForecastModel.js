@@ -207,9 +207,9 @@ class ForecastModel {
   static async getVarianceSummary() {
         var q = 'SELECT forecast_type,' +
                 ' COUNT(*) AS evaluations,' +
-                ' AVG(accuracy)::NUMERIC(5,2) AS avg_accuracy,' +
-                ' AVG(variance)::NUMERIC(8,4) AS avg_variance,' +
-                ' AVG(confidence_calibration)::NUMERIC(5,2) AS avg_confidence_calibration,' +
+                ' AVG(accuracy) AS avg_accuracy,' +
+                        ' AVG(variance) AS avg_variance,' +
+                                ' AVG(confidence_calibration) AS avg_confidence_calibration,' +
                 ' MIN(accuracy) AS min_accuracy,' +
                 ' MAX(accuracy) AS max_accuracy' +
                 ' FROM forecast_history' +

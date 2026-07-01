@@ -33,8 +33,10 @@ for (const t of types) {
 const latest = await ForecastModel.getLatestByType(t);
 if (latest) results[t] = latest;
 }
-const pipelineSummary = await ForecastModel.getPipelineSummary();
-const varianceSummary = await ForecastModel.getVarianceSummary();
+let pipelineSummary = null;
+    let varianceSummary = [];
+        try { pipelineSummary = await ForecastModel.getPipelineSummary(); } catch (e) { console.error('[Revenue] getPipelineSummary error:', e.message); }
+            try { varianceSummary = await ForecastModel.getVarianceSummary(); } catch (e) { console.error('[Revenue] getVarianceSummary error:', e.message); }
 res.json({ success: true, forecasts: results, pipeline_summary: pipelineSummary, historical_accuracy: varianceSummary, retrieved_at: new Date().toISOString() });
 } catch (err) {
 console.error('[Revenue] GET /forecast error:', err.message);
