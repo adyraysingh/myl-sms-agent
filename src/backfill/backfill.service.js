@@ -12,8 +12,8 @@ async function getCheckpoint() {
 }
 async function saveCheckpoint(lastId, stats) {
   try {
-    const checkpointPayload = { checkpoint: { last_id: lastId, stats, saved_at: new Date().toISOString() } };
-    await pool.query("INSERT INTO job_queue (queue_name, job_type, payload, status, created_at, updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW())", ['backfill','backfill_checkpoint',JSON.stringify(checkpointPayload),'completed']);
+    const cp = { checkpoint: { last_id: lastId, stats, saved_at: new Date().toISOString() } };
+    await pool.query("INSERT INTO job_queue (queue_name, job_type, payload, status, created_at, updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW())", ['backfill','backfill_checkpoint',JSON.stringify(cp),'completed']);
   } catch(e) { console.error('[Backfill] Checkpoint save failed:',e.message); }
 }
 async function collectLeadData(leadId) {
@@ -25,19 +25,9 @@ async function collectLeadData(leadId) {
     pool.query('SELECT * FROM ai_outcomes WHERE lead_id=$1 ORDER BY created_at ASC',[leadId]),
     pool.query('SELECT * FROM lead_events WHERE lead_id=$1 ORDER BY created_at ASC',[leadId])
   ]);
-  return {
-    conversations: convRows.status==='fulfilled'?convRows.value.rows:[],
-    qualifications: qualRows.status==='fulfilled'?qualRows.value.rows:[],
-    decisions: decRows.status==='fulfilled'?decRows.value.rows:[],
-    predictions: predRows.status==='fulfilled'?predRows.value.rows:[],
-    outcomes: outcomeRows.status==='fulfilled'?outcomeRows.value.rows:[],
-    events: eventRows.status==='fulfilled'?eventRows.value.rows:[]
-  };
+  return { conversations: convRows.status==='fulfilled'?convRows.value.rows:[], qualifications: qualRows.status==='fulfilled'?qualRows.value.rows:[], decisions: decRows.status==='fulfilled'?decRows.value.rows:[], predictions: predRows.status==='fulfilled'?predRows.value.rows:[], outcomes: outcomeRows.status==='fulfilled'?outcomeRows.value.rows:[], events: eventRows.status==='fulfilled'?eventRows.value.rows:[] };
 }
-function getLeadSource(lead) {
-  if (lead.crm_data && typeof lead.crm_data === 'object') return lead.crm_data.Lead_Source || lead.crm_data.lead_source || null;
-  return null;
-}
+function getLeadSource(lead) { if (lead.crm_data && typeof lead.crm_data === 'object') return lead.crm_data.Lead_Source || lead.crm_data.lead_source || null; return null; }
 function buildSyntheticContext(lead, data) {
   const parts = [];
   if (lead.full_name) parts.push('Lead: '+lead.full_name);
@@ -61,10 +51,7 @@ async function processLead(lead, stats) {
     stats.outcomes_reviewed += data.outcomes.length;
     const src = getLeadSource(lead);
     const leadInfo = { id:leadId, zoho_lead_id:zohoLeadId, full_name:lead.full_name, email:lead.email, phone:lead.phone, company:lead.company, lead_source:src, stage:lead.pipeline_stage };
-    if (data.conversations.length===0) {
-      const t = buildSyntheticContext(lead, data);
-      if (t) { await WorkerRegistry.enqueueConversation({ conversationId:'backfill-'+leadId, leadId, zohoLeadId, sourceType:src||'backfill', sourceRef:'historical_backfill_'+new Date().toISOString().split('T')[0], transcript:t, leadInfo }); stats.conversations_queued++; }
-    }
+    if (data.conversations.length===0) { const t = buildSyntheticContext(lead, data); if (t) { await WorkerRegistry.enqueueConversation({ conversationId:'backfill-'+leadId, leadId, zohoLeadId, sourceType:src||'backfill', sourceRef:'historical_backfill_'+new Date().toISOString().split('T')[0], transcript:t, leadInfo }); stats.conversations_queued++; } }
     if (data.qualifications.length===0 && data.conversations.length>0) { await WorkerRegistry.enqueueQualification({ leadId, zohoLeadId, triggerEvent:'backfill.historical_review', triggerRef:'backfill_'+new Date().toISOString().split('T')[0] }); stats.qualifications_queued++; }
     if (data.decisions.length===0 && data.qualifications.length>0) { await WorkerRegistry.enqueueDecision({ lead_id:leadId, trigger_event:'backfill.historical_review', trigger_source:'historical_backfill', trigger_data:{backfill:true,date:new Date().toISOString()} }); stats.decisions_queued++; }
     if (data.predictions.length>0 && data.outcomes.length>0) stats.outcomes_linked++;
@@ -120,13 +107,7 @@ async function generateExecutiveReport() {
     pool.query('SELECT error_type,COUNT(*) as count FROM platform_errors WHERE created_at>=$1 GROUP BY error_type ORDER BY count DESC LIMIT 10',[since])
   ]);
   const safe=(idx,fb=null)=>results[idx].status==='fulfilled'?results[idx].value.rows:fb;
-  return {
-    generated_at:new Date().toISOString(), period:{from:since,to:new Date().toISOString()},
-    summary:{ total_leads:safe(0)?.[0]?.total||0, total_conversations:safe(1)?.[0]?.total||0, total_qualifications:safe(2)?.[0]?.total||0, total_decisions:safe(3)?.[0]?.total||0, total_predictions:safe(4)?.[0]?.total||0, total_outcomes:safe(5)?.[0]?.total||0, unprocessed_leads:safe(13)?.[0]?.unprocessed||0 },
-    hot_leads:safe(6,[]), warm_leads:safe(7,[]), cold_leads:safe(8,[]),
-    channel_breakdown:safe(9,[]), conversation_sources:safe(10,[]), decision_types:safe(11,[]),
-    prediction_accuracy:safe(12,[]), queue_status:safe(14,[]), recent_errors:safe(15,[])
-  };
+  return { generated_at:new Date().toISOString(), period:{from:since,to:new Date().toISOString()}, summary:{ total_leads:safe(0)?.[0]?.total||0, total_conversations:safe(1)?.[0]?.total||0, total_qualifications:safe(2)?.[0]?.total||0, total_decisions:safe(3)?.[0]?.total||0, total_predictions:safe(4)?.[0]?.total||0, total_outcomes:safe(5)?.[0]?.total||0, unprocessed_leads:safe(13)?.[0]?.unprocessed||0 }, hot_leads:safe(6,[]), warm_leads:safe(7,[]), cold_leads:safe(8,[]), channel_breakdown:safe(9,[]), conversation_sources:safe(10,[]), decision_types:safe(11,[]), prediction_accuracy:safe(12,[]), queue_status:safe(14,[]), recent_errors:safe(15,[]) };
 }
 async function getLeadTimeline(leadId) {
   const [lead,convs,quals,decisions,predictions,outcomes,events]=await Promise.allSettled([
@@ -151,4 +132,4 @@ async function getLeadTimeline(leadId) {
   timeline.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
   return { lead:ld||null, timeline, summary:{ conversations:r(convs).length, qualifications:r(quals).length, decisions:r(decisions).length, predictions:r(predictions).length, outcomes:r(outcomes).length } };
 }
-module.exports = { runBackfill, generateExecutiveReport, getLeadTimeline, getCheckpoint };Backfill:Fixcheckpoint-usepayloadcolinsteadofmetadata(notinjob_queue)
+module.exports = { runBackfill, generateExecutiveReport, getLeadTimeline, getCheckpoint };
