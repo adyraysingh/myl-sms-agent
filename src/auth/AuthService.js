@@ -22,7 +22,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const pool = require('../memory/db/pool');
+const { Pool } = require('pg'); const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 3, idleTimeoutMillis: 30000, connectionTimeoutMillis: 15000 });
 const logger = require('../utils/logger');
 
 const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET;
