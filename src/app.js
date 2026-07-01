@@ -37,6 +37,7 @@ const learningRoutes = require('./learning/routes/learning.routes');
 const operationsRoutes = require('./operations/routes/operations.routes');
 const revenueRoutes = require('./revenue/routes/revenue.routes');
 const platformRoutes = require('./platform/routes/platform.routes');
+const ceoDashboardRoutes = require('./platform/routes/ceo-dashboard.routes');
 
 const authRoutes = require('./auth/routes/auth.routes');
 const AuthService = require('./auth/AuthService');
@@ -193,6 +194,7 @@ app.use('/api/operations', operationsRoutes);
 app.use('/api/revenue', revenueRoutes);
 app.use('/api/platform', platformRoutes);
 app.use('/api/agents', agentRoutes);
+app.use('/api/dashboard', ceoDashboardRoutes);
 
 // Phase 3.3: Simulation routes
 app.use('/api/simulation', simulationRoutes);
