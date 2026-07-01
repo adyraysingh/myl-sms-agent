@@ -5,13 +5,16 @@ const BACKFILL_START_DATE = '2026-06-15';
 const BATCH_SIZE = 50;
 async function getCheckpoint() {
   try {
-    const res = await pool.query("SELECT metadata FROM job_queue WHERE job_type = 'backfill_checkpoint' AND status = 'completed' ORDER BY created_at DESC LIMIT 1");
-    if (res.rows[0] && res.rows[0].metadata) { const m = typeof res.rows[0].metadata === 'string' ? JSON.parse(res.rows[0].metadata) : res.rows[0].metadata; return m.checkpoint || null; }
+    const res = await pool.query("SELECT payload FROM job_queue WHERE job_type = 'backfill_checkpoint' AND status = 'completed' ORDER BY id DESC LIMIT 1");
+    if (res.rows[0] && res.rows[0].payload) { const m = typeof res.rows[0].payload === 'string' ? JSON.parse(res.rows[0].payload) : res.rows[0].payload; return m.checkpoint || null; }
     return null;
   } catch (e) { return null; }
 }
 async function saveCheckpoint(lastId, stats) {
-  try { await pool.query("INSERT INTO job_queue (queue_name, job_type, payload, status, metadata, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,NOW(),NOW())", ['backfill','backfill_checkpoint',JSON.stringify({last_id:lastId}),'completed',JSON.stringify({checkpoint:{last_id:lastId,stats,saved_at:new Date().toISOString()}})]); } catch(e) { console.error('[Backfill] Checkpoint save failed:',e.message); }
+  try {
+    const checkpointPayload = { checkpoint: { last_id: lastId, stats, saved_at: new Date().toISOString() } };
+    await pool.query("INSERT INTO job_queue (queue_name, job_type, payload, status, created_at, updated_at) VALUES ($1,$2,$3,$4,NOW(),NOW())", ['backfill','backfill_checkpoint',JSON.stringify(checkpointPayload),'completed']);
+  } catch(e) { console.error('[Backfill] Checkpoint save failed:',e.message); }
 }
 async function collectLeadData(leadId) {
   const [convRows,qualRows,decRows,predRows,outcomeRows,eventRows] = await Promise.allSettled([
@@ -148,4 +151,4 @@ async function getLeadTimeline(leadId) {
   timeline.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
   return { lead:ld||null, timeline, summary:{ conversations:r(convs).length, qualifications:r(quals).length, decisions:r(decisions).length, predictions:r(predictions).length, outcomes:r(outcomes).length } };
 }
-module.exports = { runBackfill, generateExecutiveReport, getLeadTimeline, getCheckpoint };
+module.exports = { runBackfill, generateExecutiveReport, getLeadTimeline, getCheckpoint };Backfill:Fixcheckpoint-usepayloadcolinsteadofmetadata(notinjob_queue)
