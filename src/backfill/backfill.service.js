@@ -31,13 +31,17 @@ async function collectLeadData(leadId) {
     events: eventRows.status==='fulfilled'?eventRows.value.rows:[]
   };
 }
+function getLeadSource(lead) {
+  if (lead.crm_data && typeof lead.crm_data === 'object') return lead.crm_data.Lead_Source || lead.crm_data.lead_source || null;
+  return null;
+}
 function buildSyntheticContext(lead, data) {
   const parts = [];
   if (lead.full_name) parts.push('Lead: '+lead.full_name);
   if (lead.company) parts.push('Company: '+lead.company);
-  if (lead.lead_source) parts.push('Source: '+lead.lead_source);
-  if (lead.stage) parts.push('Stage: '+lead.stage);
-  if (lead.industry) parts.push('Industry: '+lead.industry);
+  const src = getLeadSource(lead);
+  if (src) parts.push('Source: '+src);
+  if (lead.pipeline_stage) parts.push('Stage: '+lead.pipeline_stage);
   if (data.events.length>0) parts.push('Events: '+data.events.map(e=>e.event_type||'interaction').join(', '));
   if (parts.length<2) return null;
   return parts.join('. ');
@@ -52,10 +56,11 @@ async function processLead(lead, stats) {
     stats.decisions_reviewed += data.decisions.length;
     stats.predictions_reviewed += data.predictions.length;
     stats.outcomes_reviewed += data.outcomes.length;
-    const leadInfo = { id:leadId, zoho_lead_id:zohoLeadId, full_name:lead.full_name, email:lead.email, phone:lead.phone, company:lead.company, lead_source:lead.lead_source, stage:lead.stage, industry:lead.industry };
+    const src = getLeadSource(lead);
+    const leadInfo = { id:leadId, zoho_lead_id:zohoLeadId, full_name:lead.full_name, email:lead.email, phone:lead.phone, company:lead.company, lead_source:src, stage:lead.pipeline_stage };
     if (data.conversations.length===0) {
       const t = buildSyntheticContext(lead, data);
-      if (t) { await WorkerRegistry.enqueueConversation({ conversationId:'backfill-'+leadId, leadId, zohoLeadId, sourceType:lead.lead_source||'backfill', sourceRef:'historical_backfill_'+new Date().toISOString().split('T')[0], transcript:t, leadInfo }); stats.conversations_queued++; }
+      if (t) { await WorkerRegistry.enqueueConversation({ conversationId:'backfill-'+leadId, leadId, zohoLeadId, sourceType:src||'backfill', sourceRef:'historical_backfill_'+new Date().toISOString().split('T')[0], transcript:t, leadInfo }); stats.conversations_queued++; }
     }
     if (data.qualifications.length===0 && data.conversations.length>0) { await WorkerRegistry.enqueueQualification({ leadId, zohoLeadId, triggerEvent:'backfill.historical_review', triggerRef:'backfill_'+new Date().toISOString().split('T')[0] }); stats.qualifications_queued++; }
     if (data.decisions.length===0 && data.qualifications.length>0) { await WorkerRegistry.enqueueDecision({ lead_id:leadId, trigger_event:'backfill.historical_review', trigger_source:'historical_backfill', trigger_data:{backfill:true,date:new Date().toISOString()} }); stats.decisions_queued++; }
@@ -72,8 +77,8 @@ async function runBackfill({ resumeFromId=null, batchSize=BATCH_SIZE }={}) {
   let hasMore = true;
   while (hasMore) {
     let query, params;
-    if (lastId) { query='SELECT id,zoho_lead_id,full_name,email,phone,company,lead_source,stage,industry FROM lead_memory WHERE created_at>=$1 AND id>$2 ORDER BY id ASC LIMIT $3'; params=[BACKFILL_START_DATE,lastId,batchSize]; }
-    else { query='SELECT id,zoho_lead_id,full_name,email,phone,company,lead_source,stage,industry FROM lead_memory WHERE created_at>=$1 ORDER BY id ASC LIMIT $2'; params=[BACKFILL_START_DATE,batchSize]; }
+    if (lastId) { query='SELECT id,zoho_lead_id,full_name,email,phone,company,pipeline_stage,crm_data FROM lead_memory WHERE created_at>=$1 AND id>$2 ORDER BY id ASC LIMIT $3'; params=[BACKFILL_START_DATE,lastId,batchSize]; }
+    else { query='SELECT id,zoho_lead_id,full_name,email,phone,company,pipeline_stage,crm_data FROM lead_memory WHERE created_at>=$1 ORDER BY id ASC LIMIT $2'; params=[BACKFILL_START_DATE,batchSize]; }
     let leads;
     try { const res=await pool.query(query,params); leads=res.rows; } catch(err) { console.error('[Backfill] Batch query failed:',err.message); break; }
     if (!leads||leads.length===0) { hasMore=false; break; }
@@ -100,10 +105,10 @@ async function generateExecutiveReport() {
     pool.query('SELECT COUNT(*) as total FROM ai_decisions WHERE created_at>=$1',[since]),
     pool.query('SELECT COUNT(*) as total FROM ai_predictions WHERE created_at>=$1',[since]),
     pool.query('SELECT COUNT(*) as total FROM ai_outcomes WHERE created_at>=$1',[since]),
-    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.lead_source,lm.stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category='hot' AND lm.created_at>=$1 ORDER BY lq.score DESC LIMIT 20",[since]),
-    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.lead_source,lm.stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category='warm' AND lm.created_at>=$1 ORDER BY lq.score DESC LIMIT 20",[since]),
-    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.lead_source,lm.stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category IN ('cold','unqualified') AND lm.created_at>=$1 ORDER BY lq.score ASC LIMIT 20",[since]),
-    pool.query('SELECT lm.lead_source,COUNT(*) as leads,AVG(lq.score) as avg_score FROM lead_memory lm LEFT JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lm.created_at>=$1 GROUP BY lm.lead_source ORDER BY leads DESC',[since]),
+    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.pipeline_stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category='hot' AND lm.created_at>=$1 ORDER BY lq.score DESC LIMIT 20",[since]),
+    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.pipeline_stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category='warm' AND lm.created_at>=$1 ORDER BY lq.score DESC LIMIT 20",[since]),
+    pool.query("SELECT lm.id,lm.full_name,lm.company,lm.pipeline_stage,lm.zoho_lead_id,lq.score,lq.category,lq.confidence,lq.calculated_at FROM lead_memory lm JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lq.category IN ('cold','unqualified') AND lm.created_at>=$1 ORDER BY lq.score ASC LIMIT 20",[since]),
+    pool.query('SELECT lm.pipeline_stage as lead_source,COUNT(*) as leads,AVG(lq.score) as avg_score FROM lead_memory lm LEFT JOIN lead_qualification lq ON lq.lead_id=lm.id WHERE lm.created_at>=$1 GROUP BY lm.pipeline_stage ORDER BY leads DESC',[since]),
     pool.query('SELECT source_type,COUNT(*) as conversations FROM conversation_analysis WHERE created_at>=$1 GROUP BY source_type ORDER BY conversations DESC',[since]),
     pool.query('SELECT decision_type,COUNT(*) as total,AVG(confidence_score) as avg_confidence FROM ai_decisions WHERE created_at>=$1 GROUP BY decision_type ORDER BY total DESC LIMIT 10',[since]),
     pool.query('SELECT module_name,COUNT(*) as total,AVG(confidence_score) as avg_confidence,SUM(CASE WHEN is_correct=true THEN 1 ELSE 0 END) as correct FROM ai_predictions WHERE created_at>=$1 GROUP BY module_name ORDER BY total DESC',[since]),
@@ -133,7 +138,7 @@ async function getLeadTimeline(leadId) {
   const r=(p)=>p.status==='fulfilled'?p.value.rows:[];
   const timeline=[];
   const ld=r(lead)[0];
-  if (ld) timeline.push({type:'lead_created',timestamp:ld.created_at,data:{source:ld.lead_source,stage:ld.stage}});
+  if (ld) timeline.push({type:'lead_created',timestamp:ld.created_at,data:{stage:ld.pipeline_stage}});
   r(events).forEach(e=>timeline.push({type:e.event_type,timestamp:e.created_at,data:e.event_data}));
   r(convs).forEach(c=>timeline.push({type:'conversation_'+c.source_type,timestamp:c.created_at,data:{sentiment:c.sentiment,intent:c.intent,signal:c.qualification_signal}}));
   r(quals).forEach(q=>timeline.push({type:'qualification',timestamp:q.calculated_at,data:{category:q.category,score:q.score,confidence:q.confidence}}));
