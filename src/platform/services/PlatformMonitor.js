@@ -19,7 +19,7 @@ var MODULES = [
 { name: 'learning_engine', version: '1.0', tables: ['learning_events'] },
 { name: 'revenue_intelligence', version: '1.0', tables: ['revenue_forecasts'] },
 { name: 'operations_engine', version: '1.0', tables: ['automation_workflows'] },
-{ name: 'platform_operations', version: '1.0', tables: ['platform_module_health'] }
+{ name: 'platform_operations', version: '1.0', tables: ['platform_config'] }
 ];
 
 var INTEGRATIONS = [
