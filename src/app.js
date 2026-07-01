@@ -38,6 +38,7 @@ const operationsRoutes = require('./operations/routes/operations.routes');
 const revenueRoutes = require('./revenue/routes/revenue.routes');
 const platformRoutes = require('./platform/routes/platform.routes');
 const ceoDashboardRoutes = require('./platform/routes/ceo-dashboard.routes');
+const backfillRoutes = require('./backfill/backfill.routes');
 
 const authRoutes = require('./auth/routes/auth.routes');
 const AuthService = require('./auth/AuthService');
@@ -195,6 +196,7 @@ app.use('/api/revenue', revenueRoutes);
 app.use('/api/platform', platformRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/dashboard', ceoDashboardRoutes);
+app.use('/api/backfill', backfillRoutes);
 
 // Phase 3.3: Simulation routes
 app.use('/api/simulation', simulationRoutes);
