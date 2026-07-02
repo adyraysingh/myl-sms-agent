@@ -1,10 +1,10 @@
 'use strict';
-const OpenAI = require('openai');
+// AI DISABLED - OpenAI removed to stop credit usage
 const pool = require('../../memory/db/pool');
 const Investigation = require('../models/Investigation');
 const PredictionPublisher = require('../../learning/services/PredictionPublisher');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// AI DISABLED - openai instance removed
 
 class AIInvestigationEngine {
 
@@ -187,24 +187,13 @@ class AIInvestigationEngine {
       (lead_id ? '\nLEAD: ' + lead_id : '') + (salesperson_id ? '\nSALES REP: ' + salesperson_id : '') +
       '\n\nEVIDENCE (' + evidence.length + ' pieces):\n' + evidenceSummary +
       '\n\nProvide evidence-based investigation. Be specific.';
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.3, max_tokens: 2000
-      });
-      return JSON.parse(completion.choices[0].message.content);
-    } catch (err) {
-      console.error('[AIInvestigationEngine] AI failed:', err.message);
-      return {
-        summary: 'Investigation completed with ' + evidence.length + ' evidence pieces. AI unavailable.',
-        root_causes: [{ cause: 'Analysis incomplete', confidence: 0, evidence_source: 'system' }],
-        findings: [{ finding: 'Manual review required', severity: 'medium', impact: 'Unknown', recommendation: 'Retry', confidence: 0 }],
-        recommendations: [], business_impact: 'Unknown', confidence: 0, patterns: []
-      };
-    }
-  }
+    // AI DISABLED - OpenAI removed to stop credit usage
+            return {
+                        summary: 'Investigation completed with ' + evidence.length + ' evidence pieces. AI disabled.',
+                        root_causes: [{ cause: 'Manual review required based on ' + evidence.length + ' evidence pieces', confidence: 50, evidence_source: 'system' }],
+                        findings: [{ finding: 'Evidence collected for manual review', severity: 'medium', impact: 'See evidence for details', recommendation: 'Review evidence and take action', confidence: 50 }],
+                        recommendations: [], business_impact: 'Requires manual assessment', confidence: 50, patterns: []
+            };
 
   static async investigateLead(lead_id, reason) {
     try {
