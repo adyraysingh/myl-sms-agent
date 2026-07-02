@@ -175,17 +175,6 @@ class ExecutiveBriefingEngine {
                       expected_business_impact: 'Monitor hot leads and follow-ups'
           };
     
-          } catch (err) {
-      console.error('[ExecutiveBriefingEngine] Narrative failed:', err.message);
-      return {
-        executive_summary: 'Health score: ' + healthScores.overall_health_score + '/100. ' + data.leadStats.hot + ' hot leads active.',
-        business_summary: { headline: 'Business at ' + healthScores.overall_health_score + '% health', key_metric: data.leadStats.total + ' leads', trend: 'stable' },
-        onboarding_performance: { rate: data.leadStats.onboarded + ' onboarded', blockers: 'Check investigations', opportunities: data.leadStats.hot + ' hot leads ready' },
-        sales_performance: { top_performer: 'See dashboard', concern: 'Check coaching', avg_score: healthScores.sales_health_score },
-        current_risks: [], current_opportunities: [], top_priorities: [], recommended_actions: [],
-        expected_business_impact: 'Monitor hot leads and follow-ups'
-      };
-    }
   }
 
   static _getPeriod(briefing_type) {
