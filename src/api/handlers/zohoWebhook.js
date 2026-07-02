@@ -1,4 +1,4 @@
-onst ZohoIngestor = require("../../memory/ingestors/zoho.ingestor");
+const ZohoIngestor = require("../../memory/ingestors/zoho.ingestor");
 const { createOrUpdateLead, updateLeadStatus } = require('../../database/leads');
 const { createConversation } = require('../../database/conversations');
 const { sendInitialOutreach } = require('../../agents/mayaAgent');
