@@ -194,7 +194,7 @@ class AIInvestigationEngine {
                         findings: [{ finding: 'Evidence collected for manual review', severity: 'medium', impact: 'See evidence for details', recommendation: 'Review evidence and take action', confidence: 50 }],
                         recommendations: [], business_impact: 'Requires manual assessment', confidence: 50, patterns: []
             };
-
+  }
   static async investigateLead(lead_id, reason) {
     try {
       return await AIInvestigationEngine.investigate({
