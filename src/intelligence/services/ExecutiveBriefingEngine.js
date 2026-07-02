@@ -1,9 +1,9 @@
 'use strict';
-const OpenAI = require('openai');
+// AI DISABLED - OpenAI removed to stop credit usage
 const pool = require('../../memory/db/pool');
 const ExecutiveBriefing = require('../models/ExecutiveBriefing');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// AI DISABLED - openai instance removed
 
 class ExecutiveBriefingEngine {
   static async generate(briefing_type = 'morning') {
@@ -165,16 +165,17 @@ class ExecutiveBriefingEngine {
       ' | LEADS: total=' + data.leadStats.total + ' hot=' + data.leadStats.hot + ' warm=' + data.leadStats.warm +
       ' | SALES REPS: ' + data.salesStats.length +
       ' | CRITICAL PENDING: ' + data.criticalDecisions;
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.4,
-        max_tokens: 1200
-      });
-      return JSON.parse(completion.choices[0].message.content);
-    } catch (err) {
+    // AI DISABLED - OpenAI removed to stop credit usage
+          return {
+                      executive_summary: 'Health score: ' + healthScores.overall_health_score + '/100. ' + data.leadStats.hot + ' hot leads active. AI briefing disabled.',
+                      business_summary: { headline: 'Business at ' + healthScores.overall_health_score + '% health', key_metric: data.leadStats.total + ' leads', trend: 'stable' },
+                      onboarding_performance: { rate: data.leadStats.onboarded + ' onboarded', blockers: 'Check investigations', opportunities: data.leadStats.hot + ' hot leads ready' },
+                      sales_performance: { top_performer: 'See dashboard', concern: 'Check coaching', avg_score: healthScores.sales_health_score },
+                      current_risks: [], current_opportunities: [], top_priorities: [], recommended_actions: [],
+                      expected_business_impact: 'Monitor hot leads and follow-ups'
+          };
+    
+          } catch (err) {
       console.error('[ExecutiveBriefingEngine] Narrative failed:', err.message);
       return {
         executive_summary: 'Health score: ' + healthScores.overall_health_score + '/100. ' + data.leadStats.hot + ' hot leads active.',
