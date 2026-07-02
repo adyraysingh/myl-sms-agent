@@ -1,4 +1,4 @@
-const OpenAI = require('openai');
+——const OpenAI = require('openai');
 const { sendSMS } = require('../services/twilioService');
 const { findLeadByPhone, createOrUpdateLead, updateLeadStatus, updateLead } = require('../database/leads');
 const { saveMessage, getConversationHistory } = require('../database/messages');
