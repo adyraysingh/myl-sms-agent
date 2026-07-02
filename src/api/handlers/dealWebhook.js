@@ -1,4 +1,4 @@
-use strict';
+'use strict';
 /**
    * dealWebhook.js — Phase 3.2 Outcome Linking + Onboarded Lead Guard
    *
