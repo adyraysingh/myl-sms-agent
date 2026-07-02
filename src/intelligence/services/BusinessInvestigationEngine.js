@@ -1,9 +1,9 @@
 'use strict';
-const OpenAI = require('openai');
+// AI DISABLED - OpenAI removed to stop credit usage
 const pool = require('../../memory/db/pool');
 const BusinessInvestigation = require('../models/BusinessInvestigation');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// AI DISABLED - openai instance removed
 
 class BusinessInvestigationEngine {
   static async investigate(question, trigger_event, investigation_type) {
@@ -18,19 +18,9 @@ class BusinessInvestigationEngine {
         ' Investigate the business question using the evidence. Identify root causes. Every claim must reference specific evidence.' +
         ' Output valid JSON: {root_cause, conclusion, severity (critical|high|medium|low), business_impact, recommendations: [{action, owner, timeline, expected_impact}], affected_owners: [], confidence_score}';
       const userPrompt = 'INVESTIGATION QUESTION: ' + question + ' -- BUSINESS EVIDENCE: ' + JSON.stringify(evidence).substring(0, 3000);
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        response_format: { type: 'json_object' },
-        temperature: 0.3,
-        max_tokens: 1500
-      });
-      let result;
-      try { result = JSON.parse(completion.choices[0].message.content); }
-      catch (parseErr) {
-        result = { root_cause: 'Analysis complete', conclusion: completion.choices[0].message.content,
-          severity: 'medium', business_impact: 'See conclusion', recommendations: [], affected_owners: [], confidence_score: 70 };
-      }
+      // AI DISABLED - OpenAI removed to stop credit usage
+              const result = { root_cause: 'Manual review required', conclusion: 'AI investigation disabled. Review evidence manually.',
+                                        severity: 'medium', business_impact: 'See evidence', recommendations: [], affected_owners: [], confidence_score: 50 };
       const investigation = await BusinessInvestigation.create({
         question,
         investigation_type: investigation_type || BusinessInvestigationEngine._detectType(question),
